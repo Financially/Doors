@@ -2,8 +2,8 @@ while not game:IsLoaded() do
 	task.wait(1)
 end
 
-print("Abysall Hub death farm for DOORS, created by FireBacon (bocaj111004)")
-print("dsc.gg/abysallhub")
+print("ISO death farm for DOORS")
+print("github.com/drawback/Doors")
 
 local Services = setmetatable({}, {
 	__index = function(self, Key)
@@ -23,9 +23,9 @@ local GameData = Services.ReplicatedStorage:FindFirstChild("GameData")
 
 local function SendCaption(Text)
 	if firesignal then
-		firesignal(RemotesFolder.Caption.OnClientEvent, "[Abysall Hub] " .. Text)
+		firesignal(RemotesFolder.Caption.OnClientEvent, "[ISO] " .. Text)
 	else
-		RemotesFolder.CaptionClient:Fire("[Abysall Hub] " .. Text)
+		RemotesFolder.CaptionClient:Fire("[ISO] " .. Text)
 	end
 end
 
@@ -47,9 +47,9 @@ if GameData and GameData.Floor.Value ~= "Hotel" then
 		local RemotesFolder = game:GetService("ReplicatedStorage").RemotesFolder
 		local function SendCaption(Text)
 			if firesignal then
-				firesignal(RemotesFolder.Caption.OnClientEvent, "[Abysall Hub] " .. Text)
+				firesignal(RemotesFolder.Caption.OnClientEvent, "[ISO] " .. Text)
 			else
-				RemotesFolder.CaptionClient:Fire("[Abysall Hub] " .. Text)
+				RemotesFolder.CaptionClient:Fire("[ISO] " .. Text)
 			end
 		end
 
@@ -75,9 +75,9 @@ if game.PlaceId ~= 6839171747 then
 		local RemotesFolder = game:GetService("ReplicatedStorage").RemotesFolder
 		local function SendCaption(Text)
 			if firesignal then
-				firesignal(RemotesFolder.Caption.OnClientEvent, "[Abysall Hub] " .. Text)
+				firesignal(RemotesFolder.Caption.OnClientEvent, "[ISO] " .. Text)
 			else
-				RemotesFolder.CaptionClient:Fire("[Abysall Hub] " .. Text)
+				RemotesFolder.CaptionClient:Fire("[ISO] " .. Text)
 			end
 		end
 

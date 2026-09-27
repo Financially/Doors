@@ -474,7 +474,7 @@ Functions.Notify = function(Settings)
 		Settings.Body = "..."
 	end
 
-	if not Options.NotifyStyle or Options.NotifyStyle.Value == "Abysall" then
+	if not Options.NotifyStyle or Options.NotifyStyle.Value == "ISO" or Options.NotifyStyle.Value == "Abysall" then
 		local Sound = Instance.new("Sound", HiddenContainer)
 		Sound.SoundId = "rbxassetid://8784885431"
 		Sound.Volume = (Toggles.NotifyPlaySound and Toggles.NotifyPlaySound.Value and Options.NotifySoundVolume.Value) or (Toggles.NotifyPlaySound and 0 or 3)
@@ -491,7 +491,7 @@ Functions.Notify = function(Settings)
 			end
 		end
 		Globals.DoorsNotify({
-			Title = "Abysall Hub",
+			Title = "ISO",
 			Description = Settings.Title,
 			Reason = Settings.Body,
 			Style = IsEntity and "WARNING" or "NOTIFICATION",
@@ -508,13 +508,13 @@ Functions.Notify = function(Settings)
 
 		if Settings.Image then
 			Globals.STX:Notify(
-				{Title = "Abysall Hub", Description = Settings.Title .. "\n" .. Settings.Body},
+				{Title = "ISO", Description = Settings.Title .. "\n" .. Settings.Body},
 				{OutlineColor = Library.Scheme.AccentColor,Time = Settings.Time or 5, Type = "image"},
 				{Image = Settings.Image, ImageColor = Color3.fromRGB(255, 255, 255)}
 			)
 		else
 			Globals.STX:Notify(
-				{Title = "Abysall Hub", Description = Settings.Title .. "\n" .. Settings.Body},
+				{Title = "ISO", Description = Settings.Title .. "\n" .. Settings.Body},
 				{OutlineColor = Library.Scheme.AccentColor,Time = Settings.Time or 5, Type = "default"}
 			)
 		end
@@ -1012,8 +1012,8 @@ Functions.GetRandomCode = function()
 end
 
 local Window = Library:CreateWindow({
-	Title = "Abysall Hub",
-	Footer = "dsc.gg/abysallhub",
+	Title = "ISO",
+	Footer = "ISO",
 	NotifySide = "Right",
 	ShowCustomCursor = false,
 	AutoShow = true,
@@ -1200,6 +1200,12 @@ Groupboxes.Self_Automation:AddDropdown("AutoInteractIgnoreList", {
 	Text = "Ignore List",
 	Values = { "Glitch Fragments", "Jeff Items", "Dropped Items", "Currency", "Minecarts", "Locks" },
 	Default = { "Glitch Fragments", "Jeff Items", "Dropped Items" },
+	Multi = true, AllowNull = true
+})
+Groupboxes.Self_Automation:AddDropdown("AutoInteractCategories", {
+	Text = "Auto Interact Types",
+	Values = { "Drawers", "Chest", "Locked Chest", "Gold", "Keys", "Library Hints", "Pickups", "Doors / Locks", "Objectives", "Hiding Places", "Other" },
+	Default = { "Drawers", "Chest", "Locked Chest", "Gold", "Keys", "Library Hints", "Pickups", "Doors / Locks", "Objectives" },
 	Multi = true, AllowNull = true
 })
 Groupboxes.Self_Automation:AddDivider()
@@ -1742,7 +1748,7 @@ end)
 Groupboxes.Visuals_EntitySettings:AddToggle("EntityChatToggle", { Text = "Notify Chat", Default = false, Tooltip = "Sends a message in the chat when an entity spawns." })
 Groupboxes.Visuals_EntitySettings:AddInput("EntityChatMessage", { Text = "Message", Default = "spawned!", Numeric = false, Placeholder = "Message" })
 Groupboxes.Visuals_EntitySettings:AddDivider()
-Groupboxes.Visuals_EntitySettings:AddDropdown("NotifyStyle", { Text = "Notify Style", Values = { "Abysall", "Doors", "STX", "Library" }, Default = 1 })
+Groupboxes.Visuals_EntitySettings:AddDropdown("NotifyStyle", { Text = "Notify Style", Values = { "ISO", "Doors", "STX", "Library" }, Default = 1 })
 Groupboxes.Visuals_EntitySettings:AddSlider("NotifySoundVolume", { Text = "Sound Volume", Min = 0, Max = 10, Default = 3, Rounding = 1 })
 Groupboxes.Visuals_EntitySettings:AddToggle("NotifyPlaySound", { Text = "Play Sound", Default = true, Tooltip = "Makes notifications play an alert sound." })
 Groupboxes.Visuals_EntitySettings:AddToggle("NotifyKeepNotifications", { Text = "Keep Notifications", Default = false, Tooltip = "Certain notifications will stay on screen until they are no longer needed." })
@@ -3141,7 +3147,7 @@ Functions.HandleCharacter = function(NewCharacter)
 		end
 
 		if Globals.SelfKilled and Globals.MainUI:FindFirstChild("Statistics") then
-			Globals.MainUI.Statistics.Death.Text = "Died to Abysall Hub"
+			Globals.MainUI.Statistics.Death.Text = "Died to ISO"
 		end
 
 		local MainFrame = Globals.MainUI:FindFirstChild("MainFrame")
@@ -4266,9 +4272,68 @@ local AutoInteractBlacklist = {
 
 local TriggerDebounce = false
 
+local AutoInteractCategoryCache = setmetatable({}, { __mode = "k" })
+local AutoInteractHidingNames = {
+	Backdoor_Wardrobe=true, Bed=true, CircularVent=true, Double_Bed=true,
+	Locker_Large=true, Locker_Small=true, Locker_Small_Locked=true,
+	RetroWardrobe=true, Rooms_Locker=true, Rooms_Locker_Fridge=true,
+	Toolshed=true, Wardrobe=true
+}
+local AutoInteractObjectiveNames = {
+	LeverForGate=true, MinesAnchor=true, FuseObtain=true, MinesGenerator=true,
+	MinesGateButton=true, LiveBreakerPolePickup=true, Generator=true,
+	ElectricalRoom=true, WaterPump=true, VineGuillotine=true
+}
+local AutoInteractKeyNames = {
+	KeyObtain=true, ElectricalKeyObtain=true, ElectricalRoomKey=true,
+	RoomKey=true, Key=true, KeyBackdoor=true, KeyElectrical=true,
+	KeyIron=true, SkeletonKey=true
+}
+local AutoInteractLibraryHintNames = {
+	HintBook=true, HintBooks=true, LiveHintBook=true, LibraryBook=true,
+	HintPaper=true, LibraryHintPaper=true, LibraryHintPaperHard=true,
+	SolutionPaper=true
+}
+
+Functions.GetAutoInteractCategory = function(Prompt)
+	if not Prompt then return "Other" end
+	local Cached = AutoInteractCategoryCache[Prompt]
+	if Cached then return Cached end
+	if Prompt.Name == "HidePrompt" or Prompt.Name == "EnterPrompt" or Prompt.Name == "NoHidingLilBro" then
+		AutoInteractCategoryCache[Prompt] = "Hiding Places"
+		return "Hiding Places"
+	end
+	local Current, Category = Prompt, nil
+	for _ = 1, 8 do
+		Current = Current.Parent
+		if not Current then break end
+		local Name, LowerName = Current.Name, string.lower(Current.Name)
+		if AutoInteractHidingNames[Name] then Category = "Hiding Places"
+		elseif Name == "ChestBoxLocked" or Name == "Chest_Vine" or Name == "Toolbox_Locked" then Category = "Locked Chest"
+		elseif Name == "ChestBox" then Category = "Chest"
+		elseif Name == "GoldPile" or Name == "StardustPickup" then Category = "Gold"
+		elseif Name == "Drawer" or string.find(LowerName, "drawer", 1, true) or string.find(LowerName, "cabinet", 1, true) or string.find(LowerName, "desk", 1, true) then Category = "Drawers"
+		elseif AutoInteractKeyNames[Name] then Category = "Keys"
+		elseif AutoInteractLibraryHintNames[Name] then Category = "Library Hints"
+		elseif AutoInteractObjectiveNames[Name] then Category = "Objectives"
+		elseif Name == "Padlock" or Name == "Door" or Name == "Lock" or string.find(LowerName, "doorlock", 1, true) then Category = "Doors / Locks"
+		elseif Current:IsA("Tool") or ItemNames[Name] then Category = "Pickups" end
+		if Category then break end
+	end
+	Category = Category or "Other"
+	AutoInteractCategoryCache[Prompt] = Category
+	return Category
+end
+
+Functions.IsAutoInteractAllowed = function(Prompt)
+	local Selected = Options.AutoInteractCategories and Options.AutoInteractCategories.Value
+	return Selected and Selected[Functions.GetAutoInteractCategory(Prompt)] == true
+end
+
 Functions.TriggerPrompt = function(Prompt)
-	if AutoInteractBlacklist[Prompt.Name] then return end
 	if not Prompt or not Prompt.Parent then return end
+	if AutoInteractBlacklist[Prompt.Name] then return end
+	if not Functions.IsAutoInteractAllowed(Prompt) then return end
 	if TriggerDebounce then return end
 
 	local ParentItem = Functions.HasItem(Prompt.Parent.Name)
