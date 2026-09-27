@@ -2578,8 +2578,17 @@ Connections.KnobFarm = Services.RunService.Heartbeat:Connect(function()
 	if Toggles.KnobFarm.Value and Globals.KnobFarmStarted then
 		if not Globals.KnobFarmActive then
 			Globals.KnobFarmActive = true
+			local DeathConfirmed = false
+			local PlayerDied = RemotesFolder:FindFirstChild("PlayerDied")
+			local PlayerDiedConnection
+			if PlayerDied and PlayerDied:IsA("RemoteEvent") then
+				PlayerDiedConnection = PlayerDied.OnClientEvent:Once(function()
+					DeathConfirmed = true
+				end)
+			end
 
 			if not KillForKnobFarm() then
+				if PlayerDiedConnection then PlayerDiedConnection:Disconnect() end
 				Functions.Notify({Title = "Knob Farm failed to kill your character."})
 				Globals.KnobFarmStarted = false
 				Globals.KnobFarmActive = false
@@ -2587,7 +2596,7 @@ Connections.KnobFarm = Services.RunService.Heartbeat:Connect(function()
 			end
 
 			local DeathTimeout = tick() + 30
-			while LocalPlayer:GetAttribute("Alive") == true
+			while LocalPlayer:GetAttribute("Alive") == true and not DeathConfirmed
 				and Toggles.KnobFarm.Value
 				and Globals.KnobFarmStarted
 				and tick() < DeathTimeout
@@ -2595,11 +2604,45 @@ Connections.KnobFarm = Services.RunService.Heartbeat:Connect(function()
 				task.wait(0.1)
 			end
 
-			if LocalPlayer:GetAttribute("Alive") == true then
+			if LocalPlayer:GetAttribute("Alive") == true and not DeathConfirmed then
+				if PlayerDiedConnection then PlayerDiedConnection:Disconnect() end
 				Functions.Notify({Title = "Knob Farm timed out while waiting for death."})
 				Globals.KnobFarmStarted = false
 				Globals.KnobFarmActive = false
 				return
+			end
+			if PlayerDiedConnection then PlayerDiedConnection:Disconnect() end
+
+			local StopAfterRevive = false
+			local Statistics = RemotesFolder:FindFirstChild("Statistics")
+			if Statistics and Statistics:IsA("RemoteEvent") then
+				local StatisticsResult
+				local StatisticsConnection = Statistics.OnClientEvent:Once(function(Data)
+					StatisticsResult = Data
+				end)
+
+				Statistics:FireServer()
+				local StatisticsTimeout = tick() + 5
+				while StatisticsResult == nil and tick() < StatisticsTimeout do
+					task.wait(0.1)
+				end
+				if StatisticsConnection then StatisticsConnection:Disconnect() end
+
+				local KnobData = typeof(StatisticsResult) == "table" and StatisticsResult.Knobs
+				local EarnedKnobs = typeof(KnobData) == "table" and tonumber(KnobData[3])
+				if EarnedKnobs and EarnedKnobs > 0 then
+					Functions.Notify({Title = "Knob Farm earned " .. tostring(EarnedKnobs) .. " knobs."})
+				elseif EarnedKnobs == 0 then
+					Functions.Notify({Title = "Knob Farm received 0 knobs.", Body = "The server did not accept this farming cycle."})
+					StopAfterRevive = true
+				else
+					Functions.Notify({Title = "Knob Farm received no Statistics result.", Body = "Check the executor console for the server response."})
+					warn("[KnobFarm] Unexpected Statistics response:", StatisticsResult)
+					StopAfterRevive = true
+				end
+			else
+				Functions.Notify({Title = "Knob Farm could not find the Statistics remote."})
+				StopAfterRevive = true
 			end
 
 			local ReviveRemote = RemotesFolder:FindFirstChild("Revive")
@@ -2622,11 +2665,7 @@ Connections.KnobFarm = Services.RunService.Heartbeat:Connect(function()
 				return
 			end
 
-			local Statistics = RemotesFolder:FindFirstChild("Statistics")
-			if Statistics then
-				Statistics:FireServer()
-			else
-				Functions.Notify({Title = "Knob Farm could not find the Statistics remote."})
+			if StopAfterRevive then
 				Globals.KnobFarmStarted = false
 			end
 			task.wait(0.25)
