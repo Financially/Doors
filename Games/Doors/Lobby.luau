@@ -29,6 +29,26 @@ local Functions = {}
 
 local LocalPlayer = Services.Players.LocalPlayer
 local RemotesFolder = Services.ReplicatedStorage:WaitForChild("RemotesFolder")
+local ModifierModule = require(Services.ReplicatedStorage:WaitForChild("Modifiers"))
+local ModifierPresetFolder = "ISO/Doors/ModifierPresets"
+local HotelModifierPresetPath = ModifierPresetFolder .. "/Hotel.json"
+local DefaultHotelModifiers = {
+	"LightsOut",
+	"PlayerLeastSlots",
+	"NoGuidingLight",
+	"NoKeySound",
+	"Slippery",
+	"Fog",
+	"FiredampMost",
+	"LockMost",
+	"LeastHidingSpots",
+	"PlayerSlow",
+	"ScreechLight",
+	"EyesFour",
+	"SnareMoster",
+	"Giggle",
+	"Gloombat"
+}
 
 while not LocalPlayer.Character do
     task.wait()
@@ -200,6 +220,87 @@ Library.Notify = function(Data, Body, Time)
     Functions.Notify({Title = Body, Time = Time or 5})
 end
 
+Functions.ReadHotelModifierPreset = function()
+	if not (isfile and readfile) or not isfile(HotelModifierPresetPath) then
+		Functions.Notify({Title = "Using the built-in Hotel preset.", Body = "Loaded the 15 modifiers from your screenshots."})
+		return table.clone(DefaultHotelModifiers)
+	end
+	local Success, Data = pcall(function()
+		return Services.HttpService:JSONDecode(readfile(HotelModifierPresetPath))
+	end)
+	if not Success or typeof(Data) ~= "table" or typeof(Data.Mods) ~= "table" then
+		Functions.Notify({Title = "Hotel modifier preset is invalid.", Body = "Save it again to repair the file."})
+		return nil
+	end
+	local ValidMods, Seen = {}, {}
+	for _, ModifierName in ipairs(Data.Mods) do
+		if typeof(ModifierName) == "string" and ModifierModule.mods[ModifierName] and not Seen[ModifierName] then
+			Seen[ModifierName] = true
+			table.insert(ValidMods, ModifierName)
+		end
+	end
+	if #ValidMods == 0 then
+		Functions.Notify({Title = "The saved Hotel preset contains no valid modifiers."})
+		return nil
+	end
+	return ValidMods
+end
+
+Functions.SaveCurrentHotelModifiers = function()
+	if not (writefile and makefolder) then
+		Functions.Notify({Title = "Your executor does not support modifier preset files."})
+		return
+	end
+	local CurrentMods = ModifierModule.getMods()
+	if typeof(CurrentMods) ~= "table" or #CurrentMods == 0 then
+		Functions.Notify({Title = "No modifiers are selected.", Body = "Choose your Hotel modifiers in the DOORS menu first."})
+		return
+	end
+	local SavedMods = {}
+	for _, ModifierName in ipairs(CurrentMods) do
+		if typeof(ModifierName) == "string" and ModifierModule.mods[ModifierName] then
+			table.insert(SavedMods, ModifierName)
+		end
+	end
+	if #SavedMods == 0 then
+		Functions.Notify({Title = "No valid modifiers could be saved."})
+		return
+	end
+	local Success, ErrorMessage = pcall(function()
+		if isfolder and not isfolder(ModifierPresetFolder) then
+			makefolder(ModifierPresetFolder)
+		end
+		writefile(HotelModifierPresetPath, Services.HttpService:JSONEncode({
+			Version = 1,
+			Destination = "Hotel",
+			Mods = SavedMods
+		}))
+	end)
+	if not Success then
+		Functions.Notify({Title = "Failed to save Hotel modifiers.", Body = tostring(ErrorMessage)})
+		return
+	end
+	Functions.Notify({Title = "Hotel modifier preset saved.", Body = tostring(#SavedMods) .. " modifiers will be reused."})
+end
+
+Functions.LoadHotelModifierPreset = function(StartElevator)
+	local SavedMods = Functions.ReadHotelModifierPreset()
+	if not SavedMods then return end
+	ModifierModule.setMods(table.clone(SavedMods))
+	if StartElevator then
+		RemotesFolder.CreateElevator:FireServer({
+			Mods = SavedMods,
+			Settings = {},
+			Destination = "Hotel",
+			FriendsOnly = false,
+			MaxPlayers = "1"
+		})
+		Functions.Notify({Title = "Starting The Hotel.", Body = "Loaded " .. tostring(#SavedMods) .. " saved modifiers."})
+	else
+		Functions.Notify({Title = "Hotel modifiers loaded.", Body = tostring(#SavedMods) .. " modifiers are now selected."})
+	end
+end
+
 Functions.CheckElevators = function()
     local TargetFound = false
 	if not Toggles.AutoJoinElevator.Value then
@@ -301,6 +402,33 @@ Groupboxes.General_Automation:AddButton("Redeem All Codes", function()
         task.wait(5.1)
     end
 end)
+
+Groupboxes.General_ModifierPresets = Tabs.General:AddRightGroupbox("Modifier Presets")
+
+Groupboxes.General_ModifierPresets:AddButton({
+	Text = "Save Current Hotel Modifiers",
+	DoubleClick = true,
+	Tooltip = "Saves the modifiers currently selected in the DOORS Hotel menu.",
+	Func = Functions.SaveCurrentHotelModifiers
+})
+
+Groupboxes.General_ModifierPresets:AddButton({
+	Text = "Load Saved Modifiers",
+	DoubleClick = false,
+	Tooltip = "Loads the saved modifiers into the current Hotel setup.",
+	Func = function()
+		Functions.LoadHotelModifierPreset(false)
+	end
+})
+
+Groupboxes.General_ModifierPresets:AddButton({
+	Text = "Start Hotel + Saved Modifiers",
+	DoubleClick = true,
+	Tooltip = "Creates a solo Hotel elevator with the saved modifier preset.",
+	Func = function()
+		Functions.LoadHotelModifierPreset(true)
+	end
+})
 
 for Index, Frame in pairs(LocalPlayer.PlayerGui.MainUI.LobbyFrame.Achievements.List:GetChildren()) do
 	if Frame:IsA("ImageButton") and Frame.ImageTransparency == 0 then
