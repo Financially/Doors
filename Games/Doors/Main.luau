@@ -1550,12 +1550,29 @@ Toggles.RemoveJamminMusic:OnChanged(function(Value)
 		Globals.JamMuffle.Enabled = LiveModifiers:FindFirstChild("Jammin") and not Value or false
 	end
 end)
+
+local function SetInteractingSoundVolumes(Muted)
+	local MainGame = Globals.MainUI.Initiator:FindFirstChild("Main_Game")
+	local PromptService = LocalPlayer:FindFirstChild("PlayerScripts")
+		and LocalPlayer.PlayerScripts:FindFirstChild("PromptService")
+	if not PromptService and MainGame then
+		PromptService = MainGame:FindFirstChild("PromptService")
+	end
+	if PromptService then
+		local Triggered = PromptService:FindFirstChild("Triggered")
+		local Holding = PromptService:FindFirstChild("Holding")
+		local Notification = PromptService:FindFirstChild("Notification")
+		if Triggered then Triggered.Volume = Muted and 0 or 0.04 end
+		if Holding then Holding.Volume = Muted and 0 or 0.1 end
+		if Notification then Notification.Volume = Muted and 0 or 0.03 end
+	end
+	local Reminder = MainGame and MainGame:FindFirstChild("Reminder")
+	local Caption = Reminder and Reminder:FindFirstChild("Caption")
+	if Caption then Caption.Volume = Muted and 0 or 0.1 end
+end
+
 Toggles.RemoveInteractingSounds:OnChanged(function(Value)
-	local PS = Globals.MainUI.Initiator.Main_Game.PromptService
-	PS.Triggered.Volume   = Value and 0 or 0.04
-	PS.Holding.Volume     = Value and 0 or 0.1
-	PS.Notification.Volume = Value and 0 or 0.03
-	Globals.MainUI.Initiator.Main_Game.Reminder.Caption.Volume = Value and 0 or 0.1
+	SetInteractingSoundVolumes(Value)
 end)
 
 Groupboxes.Visuals_LeftTab = Tabs.Visuals:AddLeftTabbox("Camera / Effects")
@@ -1837,7 +1854,7 @@ Groupboxes.Visuals_ESP_Toggles:AddToggle("LadderESPToggle",     { Text = "Ladder
 Groupboxes.Visuals_ESP_Toggles:AddDivider()
 Groupboxes.Visuals_ESP_Toggles:AddDropdown("EntityESPOptions",     { 
 	Text = "Entity List",
-	Values = { "Rush","Ambush","Eyes","Dupe","Figure","Blitz","Lookman","Snare","Giggle","Gloombat Eggs","Grumble","A-60","A-120","Sally","Jeff the Killer","Groundskeeper","Mandrake Hole","Monument","Bramble","AR0xMBUSH","RNIUSHCG==" },
+	Values = { "Rush","Ambush","Eyes","Dupe","Figure","Blitz","Lookman","Snare","Giggle","Gloombat Eggs","Grumble","A-60","A-120","Sally","Jeff the Killer","Groundskeeper","Louie Hole","Mandrake Hole","Monument","Bramble","AR0xMBUSH","RNIUSHCG==" },
 	Multi = true,
 	AllowNull = true
 })
@@ -1867,7 +1884,7 @@ local EntityESPLabels = {
 	Snare = "Snare", GrumbleRig = "Grumble",
 	Drakobloxxer = "Drakobloxxer", Hole = "Mandrake Hole", Groundskeeper = "Groundskeeper",
 	LiveEntityBramble = "Bramble", Figure = "Figure", FigureRig = "Figure", FigureRagdoll = "Figure",
-	FakeDoor = "Dupe", DoorFake = "Dupe"
+	FakeDoor = "Dupe", DoorFake = "Dupe", MouseHole = "Louie Hole"
 }
 
 local NodeEntities = {
@@ -2867,11 +2884,7 @@ Functions.HandleCharacter = function(NewCharacter)
 		if Vignette then Vignette.Image = "Disabled" end
 	end
 	if Toggles.RemoveInteractingSounds.Value then
-		local PS = Globals.MainUI.Initiator.Main_Game.PromptService
-		PS.Triggered.Volume = 0
-		PS.Holding.Volume   = 0
-		PS.Notification.Volume = 0
-		Globals.MainUI.Initiator.Main_Game.Reminder.Caption.Volume = 0
+		SetInteractingSoundVolumes(true)
 	end
 	if Toggles.DisableEntityJumpscares.Value then
 		local JS = Globals.MainUI.Initiator.Main_Game.RemoteListener:FindFirstChild("Jumpscares")
@@ -3754,8 +3767,13 @@ Functions.HandleObject = function(Object)
 		if Toggles.ChestESPToggle.Value then Functions.AddESP({ Object = Object, Text = "Locked Item Locker", Color = Options.ChestESPColor.Value }, true) end
 		table.insert(Objects.Chests, Object)
 	elseif Name == "MouseHole" then
-		if Toggles.ChestESPToggle.Value then Functions.AddESP({ Object = Object, Text = "Mouse", Color = Options.ChestESPColor.Value }, true) end
+		if Toggles.EntityESPToggle.Value and Options.EntityESPOptions.Value["Louie Hole"] then
+			Functions.AddESP({ Object = Object, Text = "Louie Hole", Color = Options.EntityESPColor.Value }, true)
+		elseif Toggles.ChestESPToggle.Value then
+			Functions.AddESP({ Object = Object, Text = "Louie Hole", Color = Options.ChestESPColor.Value }, true)
+		end
 		table.insert(Objects.Chests, Object)
+		table.insert(Objects.Entities, Object)
 	elseif ItemNames[Name] and Object:FindFirstChild("ModulePrompt") then
 		if Toggles.ItemESPToggle.Value then Functions.AddESP({ Object = Object, Text = ItemNames[Name], Color = Options.ItemESPColor.Value }, Object:GetAttribute("ParentRoom") ~= nil) end
 		if Name == "LotusHolder" or Name == "LotusPetalPickup" then
