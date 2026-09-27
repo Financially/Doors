@@ -253,12 +253,22 @@ Functions.SaveCurrentHotelModifiers = function()
 	end
 	local CurrentMods = ModifierModule.getMods()
 	if typeof(CurrentMods) ~= "table" or #CurrentMods == 0 then
+		CurrentMods = {}
+		for _, Object in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+			if Object:IsA("TextButton") and ModifierModule.mods[Object.Name]
+				and Object:GetAttribute("Enabled") == true then
+				table.insert(CurrentMods, Object.Name)
+			end
+		end
+	end
+	if typeof(CurrentMods) ~= "table" or #CurrentMods == 0 then
 		Functions.Notify({Title = "No modifiers are selected.", Body = "Choose your Hotel modifiers in the DOORS menu first."})
 		return
 	end
-	local SavedMods = {}
+	local SavedMods, SeenMods = {}, {}
 	for _, ModifierName in ipairs(CurrentMods) do
-		if typeof(ModifierName) == "string" and ModifierModule.mods[ModifierName] then
+		if typeof(ModifierName) == "string" and ModifierModule.mods[ModifierName] and not SeenMods[ModifierName] then
+			SeenMods[ModifierName] = true
 			table.insert(SavedMods, ModifierName)
 		end
 	end
@@ -292,10 +302,14 @@ Functions.LoadHotelModifierPreset = function(StartElevator)
 			Mods = SavedMods,
 			Settings = {},
 			Destination = "Hotel",
-			FriendsOnly = false,
-			MaxPlayers = "1"
+			FriendsOnly = Toggles.ModifierPresetFriendsOnly.Value,
+			MaxPlayers = tostring(Options.ModifierPresetMaxPlayers.Value)
 		})
-		Functions.Notify({Title = "Starting The Hotel.", Body = "Loaded " .. tostring(#SavedMods) .. " saved modifiers."})
+		Functions.Notify({
+			Title = "Hotel elevator created.",
+			Body = tostring(#SavedMods) .. " modifiers, " .. tostring(Options.ModifierPresetMaxPlayers.Value)
+				.. " player slots" .. (Toggles.ModifierPresetFriendsOnly.Value and ", friends only." or ".")
+		})
 	else
 		Functions.Notify({Title = "Hotel modifiers loaded.", Body = tostring(#SavedMods) .. " modifiers are now selected."})
 	end
@@ -405,6 +419,23 @@ end)
 
 Groupboxes.General_ModifierPresets = Tabs.General:AddRightGroupbox("Modifier Presets")
 
+Groupboxes.General_ModifierPresets:AddSlider("ModifierPresetMaxPlayers", {
+	Text = "Max Players",
+	Min = 1,
+	Max = 4,
+	Default = 2,
+	Rounding = 0,
+	Compact = false
+})
+
+Groupboxes.General_ModifierPresets:AddToggle("ModifierPresetFriendsOnly", {
+	Text = "Friends Only",
+	Default = true,
+	Tooltip = "Only your Roblox friends can join the created elevator."
+})
+
+Groupboxes.General_ModifierPresets:AddDivider()
+
 Groupboxes.General_ModifierPresets:AddButton({
 	Text = "Save Current Hotel Modifiers",
 	DoubleClick = true,
@@ -422,9 +453,9 @@ Groupboxes.General_ModifierPresets:AddButton({
 })
 
 Groupboxes.General_ModifierPresets:AddButton({
-	Text = "Start Hotel + Saved Modifiers",
+	Text = "Create Hotel + Saved Modifiers",
 	DoubleClick = true,
-	Tooltip = "Creates a solo Hotel elevator with the saved modifier preset.",
+	Tooltip = "Creates a Hotel elevator with the selected player limit and privacy setting.",
 	Func = function()
 		Functions.LoadHotelModifierPreset(true)
 	end
