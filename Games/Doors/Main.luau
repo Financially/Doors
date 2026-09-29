@@ -4837,8 +4837,8 @@ end)
 			local Limit = EntityDistances[Entity.Name]
 			local Part = Limit and Entity:IsA("Model") and Entity.PrimaryPart
 			if Limit and Part and Entity:GetAttribute("Inactive") ~= true
-				and (EarlyRusher[Entity.Name]
-					or LocalPlayer:DistanceFromCharacter(Part.Position) < Limit * 1.5) then
+				and LocalPlayer:DistanceFromCharacter(Part.Position) < (EarlyRusher[Entity.Name]
+					and (Character:GetAttribute("Hiding") and math.huge or 200) or Limit * 1.5) then
 				return Entity
 			end
 		end
@@ -4871,6 +4871,17 @@ end)
 		local Look = Vector3.new(Flat.Unit.X, Vertical, Flat.Unit.Z).Unit
 		local Goal = CFrame.lookAt(Current.Position, Current.Position + Look, Vector3.yAxis)
 		Camera.CFrame = Current:Lerp(Goal, 0.16)
+	end
+
+	local function NearCrouchPassage(Position)
+		local Room = CurrentRooms:FindFirstChild(tostring(LatestRoom.Value))
+		if not Room then return false end
+		for _, Object in Room:GetDescendants() do
+			if Object:IsA("BasePart") and (Object.Name == "CrouchPart" or Object.Name == "DuckPart")
+				and (Object.Position - Position).Magnitude < 11 then return true end
+		end
+		local Duck = Functions.GetNearestDuckBoard()
+		return Duck and Duck.PrimaryPart and (Duck.PrimaryPart.Position - Position).Magnitude < 11 or false
 	end
 
 	local function NearestObjective(Room, Categories)
@@ -5048,6 +5059,7 @@ end)
 			local Delta = Position - RootPart.Position
 			local Flat = Vector3.new(Delta.X, 0, Delta.Z)
 			FaceCamera(Flat)
+			if Position.Y - RootPart.Position.Y > 1.2 then Humanoid.Jump = true end
 			Humanoid:Move(Flat.Magnitude > 1 and Flat.Unit or Vector3.zero, false)
 		end)
 		local Started, LastPosition, ProgressAt = tick(), RootPart.Position, tick()
@@ -5095,6 +5107,12 @@ end)
 			task.wait(0.15)
 		end
 		local StartedRoom = LatestRoom.Value
+		local FlatDistance = (Vector3.new(Position.X, 0, Position.Z) - Vector3.new(RootPart.Position.X, 0, RootPart.Position.Z)).Magnitude
+		if not HidingGoal and Position.Y - RootPart.Position.Y > 2 and FlatDistance < 55 then
+			-- Stair landings are frequently missing from the Hotel navmesh. Walking the
+			-- visible corridor directly avoids alternating between both stair rails.
+			return DirectWalk(Position, false, 10)
+		end
 		-- The game's control module overrides MoveTo every frame. Drive Humanoid:Move
 		-- just after input instead, and always remove the binding on exit.
 		local MoveBinding = "AbysallHotelMove"
@@ -5143,7 +5161,7 @@ end)
 				end
 				Index = Furthest
 				local Node = CollisionRoute[Index]
-				SetCrouching(Node.Crouch)
+				SetCrouching(Node.Crouch and NearCrouchPassage(Node.Position))
 				Target = Node.Position
 				local BestDistance = (RootPart.Position - Target).Magnitude
 				local ProgressAt = tick()
@@ -5368,6 +5386,104 @@ end)
 		return true
 	end
 
+	local HotelThreat
+	local HotelThreatLastDistance
+	local HotelThreatEnteredAt
+	local HotelThreatClearAt
+	local HotelAmbushBetweenPasses = false
+
+	local function ResetHotelThreat()
+		HotelThreat = nil
+		HotelThreatLastDistance = nil
+		HotelThreatEnteredAt = nil
+		HotelThreatClearAt = nil
+		HotelAmbushBetweenPasses = false
+		Globals.AutoClosetActive = false
+	end
+
+	local function HandleHotelThreat()
+		local Detected = ActiveThreat()
+		if Detected then
+			if HotelThreat ~= Detected then
+				HotelThreat = Detected
+				HotelThreatLastDistance = nil
+				HotelThreatEnteredAt = nil
+				HotelThreatClearAt = nil
+				HotelAmbushBetweenPasses = false
+			end
+		elseif HotelThreat and (not HotelThreat.Parent or HotelThreat:GetAttribute("Inactive") == true) then
+			Detected = nil
+		else
+			Detected = HotelThreat
+		end
+
+		if not Detected then
+			if Character:GetAttribute("Hiding") == true and HotelThreat then
+				HotelThreatClearAt = HotelThreatClearAt or tick()
+				Globals.AutoClosetActive = true
+				if tick() - HotelThreatClearAt >= 1.35 then
+					RemotesFolder.CamLock:FireServer()
+					local Started = tick()
+					while Character:GetAttribute("Hiding") == true and tick() - Started < 2 do task.wait(0.05) end
+					ResetHotelThreat()
+				end
+				return true
+			end
+			if Character:GetAttribute("Hiding") == true then
+				RemotesFolder.CamLock:FireServer()
+				ResetHotelThreat()
+				return true
+			end
+			if HotelThreat then ResetHotelThreat() end
+			return false
+		end
+
+		local Part = Detected.PrimaryPart
+		if not Part then return true end
+		local Distance = LocalPlayer:DistanceFromCharacter(Part.Position)
+		local Previous = HotelThreatLastDistance or Distance
+		local Approaching = Distance < Previous - 0.75
+		local MovingAway = Distance > Previous + 0.75
+		local IsAmbush = string.find(Detected.Name, "Ambush", 1, true) ~= nil
+		HotelThreatLastDistance = Distance
+		HotelThreatClearAt = nil
+
+		if Character:GetAttribute("Hiding") == true then
+			Globals.AutoClosetActive = true
+			HotelThreatEnteredAt = HotelThreatEnteredAt or tick()
+			-- Ambush must be allowed to pass several times. Leave only after a clearly
+			-- completed pass, then stay beside the same closet until it reverses.
+			if IsAmbush and tick() - HotelThreatEnteredAt > 1.1 and Distance > 165 and MovingAway then
+				HotelAmbushBetweenPasses = true
+				HotelThreatEnteredAt = nil
+				RemotesFolder.CamLock:FireServer()
+				local Started = tick()
+				while Character:GetAttribute("Hiding") == true and tick() - Started < 2 do task.wait(0.05) end
+			end
+			return true
+		end
+
+		Globals.AutoClosetActive = true
+		local HidePrompt = NearestCloset()
+		if not HidePrompt then Notice("Threat within 200 studs; no hiding spot is available.") return true end
+		local HidePosition = PromptPosition(HidePrompt)
+		if HidePosition and (RootPart.Position - HidePosition).Magnitude > math.max(8, HidePrompt.MaxActivationDistance + 2) then
+			MoveToward(HidePosition, true)
+			Distance = Detected.PrimaryPart and LocalPlayer:DistanceFromCharacter(Detected.PrimaryPart.Position) or Distance
+		end
+		local MayEnter = not IsAmbush or not HotelAmbushBetweenPasses or Approaching or Distance < 80
+		if MayEnter and Distance <= 200 then
+			SafePrompt(HidePrompt)
+			local Started = tick()
+			while Character:GetAttribute("Hiding") ~= true and tick() - Started < 1.2 do task.wait(0.04) end
+			if Character:GetAttribute("Hiding") == true then
+				HotelThreatEnteredAt = tick()
+				HotelAmbushBetweenPasses = false
+			end
+		end
+		return true
+	end
+
 	local function RunSeekRoute(Room)
 		local Exit = Room:FindFirstChild("RoomExit")
 		if not Exit then return false end
@@ -5400,7 +5516,7 @@ end)
 			return
 		end
 		if not Character or not RootPart or not Humanoid or Humanoid.Health <= 0 then return end
-		if Character:GetAttribute("Hiding") or Globals.AutoClosetActive then return end
+		if HandleHotelThreat() then return end
 		if Humanoid.Sit then
 			Humanoid.Sit = false
 			Humanoid.Jump = true
@@ -5412,15 +5528,6 @@ end)
 		if MainGame and MainGame.chase then
 			local ChaseRoom = CurrentRooms:FindFirstChild(tostring(LatestRoom.Value))
 			if ChaseRoom then RunSeekRoute(ChaseRoom) end
-			return
-		end
-
-		local Threat = ActiveThreat()
-		if Threat then
-			local HidePrompt = NearestCloset()
-			if not HidePrompt then return Notice("Threat nearby; no reachable hiding spot yet.") end
-			local HidePosition = PromptPosition(HidePrompt)
-			if HidePosition and MoveToward(HidePosition, true) then SafePrompt(HidePrompt) end
 			return
 		end
 
@@ -5583,12 +5690,13 @@ end)
 		end
 		if Floor ~= "Hotel" then return StopWithReason("Switch to The Hotel first.") end
 		for _, Name in {
-			"AutoInteractToggle", "AutoClosetToggle", "ObjectiveESPToggle", "ItemESPToggle",
+			"AutoInteractToggle", "ObjectiveESPToggle", "ItemESPToggle",
 			"AutoUnlockPadlockToggle", "AutoHeartbeatMinigame", "AutoBreakerBox",
 			"BypassEyes", "BypassDupe", "BypassGiggle", "BypassSnare",
 			"BypassSeekObstructions", "BypassSeekingWall", "FigureGodmode",
 			"NoScreechDamage", "NoHaltDamage"
 		} do SetManaged(Name, true) end
+		SetManaged("AutoClosetToggle", false)
 		SetManagedOption("AutoInteractCategories", {
 			Drawers = true, Chest = true, ["Locked Chest"] = true, Gold = true,
 			Keys = true, ["Library Hints"] = true, Pickups = true,
@@ -5597,6 +5705,7 @@ end)
 		})
 		-- Auto Hotel owns threat handling; never inherit a saved Rush/Ambush ignore list.
 		SetManagedOption("AutoClosetEntityList", {})
+		ResetHotelThreat()
 		Notice("Started. Navigation pauses for threats and stops on unsolved rooms.")
 	end)
 	Options.HotelAutoSpeed:OnChanged(function(Value)
