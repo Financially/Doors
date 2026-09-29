@@ -68,7 +68,7 @@ return function(Window)
 
     local Community = InfoTab:AddLeftGroupbox("Community")
     Community:AddButton("Copy Project Link", function()
-	    toclipboard("https://github.com/drawback/Doors")
+	    toclipboard("https://github.com/Financially/Doors")
 	    Library:Notify("Project link copied.")
     end)
 end

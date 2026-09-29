@@ -11,10 +11,10 @@ local Services = setmetatable({}, {
 local Bindable = Instance.new("BindableFunction")
 Bindable.OnInvoke = function(Response)
     local Success, Result = pcall(function()
-        toclipboard("https://github.com/drawback/Doors")
+        toclipboard("https://github.com/Financially/Doors")
     end)
     if not Success then
-        Services.LocalPlayer:Kick("Failed to copy project link.\nhttps://github.com/drawback/Doors")
+        Services.LocalPlayer:Kick("Failed to copy project link.\nhttps://github.com/Financially/Doors")
     end
 end
 

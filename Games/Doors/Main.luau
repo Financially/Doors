@@ -466,7 +466,7 @@ Globals.DoorsNotify = function(NotifyOptions)
 	end)
 end
 
-Globals.STX = loadstring(game:HttpGet("https://raw.githubusercontent.com/drawback/Doors/refs/heads/main/Components/STX.luau"))()
+Globals.STX = loadstring(game:HttpGet("https://raw.githubusercontent.com/Financially/Doors/refs/heads/main/Components/STX.luau"))()
 Functions.Notify = function(Settings)
 	local HiddenContainer = GetHiddenContainer()
 
@@ -1212,6 +1212,10 @@ Groupboxes.Self_Automation:AddDivider()
 Groupboxes.Self_Automation:AddToggle("AutoClosetToggle", {
 	Text = "Auto Closet", Default = false,
 	Tooltip = "Automatically hides in a nearby closet when an entity is near."
+})
+Groupboxes.Self_Automation:AddSlider("AutoClosetClearDelay", {
+	Text = "Leave After Clear (s)", Min = 1, Max = 5, Default = 2, Rounding = 1,
+	Tooltip = "Waits for a threat to be gone or safely moving away before leaving."
 })
 Toggles.AutoClosetToggle:AddKeyPicker("AutoClosetKeybind", {
 	Text = "Auto Closet", Default = "Q", Mode = "Toggle", SyncToggleState = true
@@ -2111,6 +2115,19 @@ Groupboxes.Floors_Automation:AddSlider("AutoSteerMinecartDuckDistance", {
 	Disabled = not Functions.CheckCompatability({"require"}), DisabledTooltip = Globals.IncompatibleMessage
 })
 Groupboxes.Floors_Automation:AddDivider()
+Groupboxes.Floors_Automation:AddToggle("HotelAutoRun", {
+	Text = "Auto Hotel (experimental)", Default = false,
+	Tooltip = "Walks toward the next door, collects required keys/objectives and pauses for threats. Stops safely when a room cannot be solved."
+})
+Groupboxes.Floors_Automation:AddSlider("HotelAutoSpeed", {
+	Text = "Auto Hotel Speed Bonus", Min = 0, Max = 35, Default = 10, Rounding = 0,
+	Tooltip = "Uses the existing Speed Boost while Auto Hotel is running."
+})
+Groupboxes.Floors_Automation:AddToggle("HotelAutoLoop", {
+	Text = "Replay Hotel after win", Default = false,
+	Tooltip = "Starts another Hotel run after Door 100 has finished. It never replays an earlier death."
+})
+Groupboxes.Floors_Automation:AddDivider()
 Groupboxes.Floors_Automation:AddToggle("RoomsAutoWalk",             { Text = "Auto Rooms",       Default = false, Tooltip = "Automatically moves and hides from entities in The Rooms." })
 Groupboxes.Floors_Automation:AddSlider("RoomsAutoWalkPathfindTimeout", { Text = "Pathfind Timeout", Min = 0.5, Max = 3, Default = 1, Rounding = 1 })
 Groupboxes.Floors_Automation:AddToggle("RoomsAutoWalkIgnoreA60",    { Text = "Ignore A-60",      Default = false, Tooltip = "Continues to walk if entity 'A-60' is present, enables position spoof automatically." })
@@ -2533,7 +2550,7 @@ Groupboxes.Floors_Farming:AddButton({
 	DoubleClick = true,
 	Tooltip = "Automatically farms deaths, joining new runs.",
 	Func = function()
-		loadstring(game:HttpGet("https://raw.githubusercontent.com/drawback/Doors/refs/heads/main/Scripts/DeathFarm.luau"))()
+		loadstring(game:HttpGet("https://raw.githubusercontent.com/Financially/Doors/refs/heads/main/Scripts/DeathFarm.luau"))()
 	end,
 
 	Disabled = not Functions.CheckCompatability({"fireproximityprompt", "firesignal"}),
@@ -2545,7 +2562,7 @@ Groupboxes.Floors_Farming:AddButton({
 	Tooltip = "Copies the death farm loadstring to your clipboard.",
 	Func = function()
 		toclipboard([==[
-			loadstring(game:HttpGet("https://raw.githubusercontent.com/drawback/Doors/refs/heads/main/Scripts/DeathFarm.luau"))()
+			loadstring(game:HttpGet("https://raw.githubusercontent.com/Financially/Doors/refs/heads/main/Scripts/DeathFarm.luau"))()
 		]==])
 		Library:Notify("Loadstring has been copied to your clipboard.")
 	end,
@@ -3061,29 +3078,93 @@ Functions.HandleCharacter = function(NewCharacter)
 
 	Globals.SpoofOffset = 0
 	Globals.LastAutoHide = tick()
+	Globals.AutoHideThreat = nil
+	Globals.AutoHideClearSince = nil
+	Globals.AutoHideLastDistance = nil
+	Globals.AutoHideEnteredAt = nil
+	Globals.AutoHideAmbushCooldown = false
 	Connections.AutoHideConnection = Services.RunService.Heartbeat:Connect(function()
-		if not Toggles.AutoClosetToggle.Value or tick() - Globals.LastAutoHide <= 0.1 then
+		if not Toggles.AutoClosetToggle.Value then
 			Globals.AutoClosetActive = false
+			Globals.AutoHideThreat = nil
+			Globals.AutoHideClearSince = nil
+			return
+		end
+		if tick() - Globals.LastAutoHide <= 0.1 then
 			return
 		end
 		local Entity = Functions.GetNearestEntity(true, Options.AutoClosetEntityList.Value)
 		if Entity then
+			local Distance = Entity.PrimaryPart and LocalPlayer:DistanceFromCharacter(Entity.PrimaryPart.Position) or math.huge
+			local Previous = Globals.AutoHideLastDistance or Distance
+			local IsAmbush = Entity.Name:find("Ambush") ~= nil
+			if Globals.AutoHideThreat ~= Entity then
+				Globals.AutoHideAmbushCooldown = false
+				Globals.AutoHideEnteredAt = nil
+			end
+			Globals.AutoHideThreat = Entity
+			Globals.AutoHideClearSince = nil
+			Globals.AutoHideLastDistance = Distance
 			local Closet = Functions.GetNearestHidingSpot()
 			if Character:GetAttribute("Hiding") ~= true and Closet then
-				Globals.AutoClosetActive = true
-				Functions.ForceFirePrompt(Closet.HidePrompt)
+				-- After an Ambush pass, stay outside while it is moving away. Re-enter
+				-- when it reverses and approaches again, or if it is already very close.
+				local Approaching = Distance < Previous - 1
+				if not IsAmbush or not Globals.AutoHideAmbushCooldown or Approaching or Distance < 65 then
+					Globals.AutoHideAmbushCooldown = false
+					Globals.AutoClosetActive = true
+					Functions.ForceFirePrompt(Closet.HidePrompt)
+				end
 			end
 			if Character:GetAttribute("Hiding") then
+				Globals.AutoClosetActive = true
+				Globals.AutoHideEnteredAt = Globals.AutoHideEnteredAt or tick()
 				if Toggles.SpectateEntityToggle.Value and Entity.PrimaryPart then
 					Globals.SpectateEntity = Entity
 				end
+				-- Ambush makes multiple passes. Leave after each completed pass so Hide
+				-- cannot eject/damage the player, then wait for the reversal to re-enter.
+				if IsAmbush and tick() - Globals.AutoHideEnteredAt > 1
+					and Distance > 90 and Distance > Previous + 1 then
+					Globals.AutoHideAmbushCooldown = true
+					Globals.AutoHideEnteredAt = nil
+					Globals.AutoClosetActive = false
+					RemotesFolder.CamLock:FireServer()
+				end
 			end
 		elseif Character:GetAttribute("Hiding") == true then
-			Globals.SpectateEntity = nil
-			Globals.AutoClosetActive = false
-			RemotesFolder.CamLock:FireServer()
+			local Threat = Globals.AutoHideThreat
+			local Gone = not Threat or not Threat.Parent or Threat:GetAttribute("Inactive") == true or not Threat.PrimaryPart
+			if not Gone then
+				local Distance = LocalPlayer:DistanceFromCharacter(Threat.PrimaryPart.Position)
+				local Previous = Globals.AutoHideLastDistance or Distance
+				local IsAmbush = Threat.Name:find("Ambush") ~= nil
+				Gone = Distance > (IsAmbush and 150 or 170) and Distance >= Previous
+				Globals.AutoHideLastDistance = Distance
+				if Gone and IsAmbush then Globals.AutoHideAmbushCooldown = true end
+			end
+			Globals.AutoHideClearSince = Gone and (Globals.AutoHideClearSince or tick()) or nil
+			Globals.AutoClosetActive = true
+			if Globals.AutoHideClearSince
+				and tick() - Globals.AutoHideClearSince >= Options.AutoClosetClearDelay.Value then
+				Globals.SpectateEntity = nil
+				Globals.AutoClosetActive = false
+				Globals.AutoHideThreat = nil
+				Globals.AutoHideClearSince = nil
+				Globals.AutoHideEnteredAt = nil
+				RemotesFolder.CamLock:FireServer()
+			end
 		else
 			Globals.SpectateEntity = nil
+			Globals.AutoClosetActive = false
+			local Threat = Globals.AutoHideThreat
+			if not (Globals.AutoHideAmbushCooldown and Threat and Threat.Parent
+				and Threat.Name:find("Ambush") and Threat:GetAttribute("Inactive") ~= true) then
+				Globals.AutoHideThreat = nil
+				Globals.AutoHideAmbushCooldown = false
+			end
+			Globals.AutoHideClearSince = nil
+			Globals.AutoHideEnteredAt = nil
 		end
 		Globals.LastAutoHide = tick()
 	end)
@@ -4663,7 +4744,695 @@ LocalPlayer.CharacterAdded:Connect(function(NewCharacter)
 	Functions.HandleCharacter(NewCharacter)
 end)
 
+-- Hotel-only navigation. Keep this isolated from the existing Rooms walker and
+-- from the game's per-frame character handlers.
+;(function()
+	local ChangedSettings = {}
+	local LastNotice = nil
+	local DoorAttempts = {}
+	local PromptAttempts = setmetatable({}, { __mode = "k" })
+	local MainGame
+	pcall(function() MainGame = require(Globals.MainUI.Initiator.Main_Game) end)
+	Globals.HotelAutoUnloaded = false
+
+	local function SetCrouching(Value)
+		if not MainGame or type(MainGame.crouch) ~= "function" then return false end
+		local Success = pcall(function()
+			if Value and not MainGame.crouching then
+				MainGame.crouch(true)
+			elseif not Value and MainGame.crouching then
+				-- nil uses DOORS' ceiling check before standing up.
+				MainGame.crouch()
+			end
+		end)
+		return Success
+	end
+
+	local function Notice(Message)
+		if LastNotice == Message then return end
+		LastNotice = Message
+		Functions.Notify({ Title = "Auto Hotel", Body = Message, Time = 5 })
+	end
+
+	local function SetManaged(Name, Value)
+		local Toggle = Toggles[Name]
+		if not Toggle then return end
+		if ChangedSettings[Name] == nil then ChangedSettings[Name] = Toggle.Value end
+		if Toggle.Value ~= Value then Toggle:SetValue(Value) end
+	end
+
+	local function RestoreSettings()
+		for Name, OldValue in ChangedSettings do
+			local Toggle = Toggles[Name]
+			if Toggle and Toggle.Value ~= OldValue then Toggle:SetValue(OldValue) end
+		end
+		table.clear(ChangedSettings)
+		if Globals.HotelOldSpeed ~= nil then
+			Options.SpeedBoostSlider:SetValue(Globals.HotelOldSpeed)
+			Globals.HotelOldSpeed = nil
+		end
+		if Humanoid and Humanoid.Parent then
+			Humanoid.WalkSpeed = Functions.GetCurrentSpeed()
+				+ (Toggles.SpeedBoostToggle.Value and Options.SpeedBoostSlider.Value or 0)
+		end
+	end
+
+	local function ActiveThreat()
+		for _, Entity in Services.Workspace:GetChildren() do
+			local Limit = EntityDistances[Entity.Name]
+			local Part = Limit and Entity:IsA("Model") and Entity.PrimaryPart
+			if Limit and Part and Entity:GetAttribute("Inactive") ~= true
+				and not (Options.AutoClosetEntityList.Value or {})[(Entities[Entity.Name] or {}).Alias]
+				and LocalPlayer:DistanceFromCharacter(Part.Position) < Limit * 1.5 then
+				return Entity
+			end
+		end
+		return nil
+	end
+
+	local function PromptPosition(Prompt)
+		if not Prompt or not Prompt.Parent then return nil end
+		local Parent = Prompt.Parent
+		if Parent:IsA("Attachment") then Parent = Parent.Parent end
+		if Parent and Parent:IsA("BasePart") then return Parent.Position end
+		if Parent and Parent:IsA("Model") then return Parent:GetPivot().Position end
+		return nil
+	end
+
+	local function SafePrompt(Prompt)
+		if not Prompt or not Prompt:IsA("ProximityPrompt") or not Prompt.Parent then return false end
+		local Position = PromptPosition(Prompt)
+		if not Position or not RootPart or (RootPart.Position - Position).Magnitude > math.max(12, Prompt.MaxActivationDistance + 3) then return false end
+		return pcall(Functions.ForceFirePrompt, Prompt)
+	end
+
+	local function NearestObjective(Room, Categories)
+		local Best, BestDistance = nil, math.huge
+		for _, Prompt in Room:GetDescendants() do
+			if Prompt:IsA("ProximityPrompt") and Prompt.Enabled and Prompt.Parent
+				and (PromptAttempts[Prompt] or 0) < 3
+				and Categories[Functions.GetAutoInteractCategory(Prompt)] then
+				local Position = PromptPosition(Prompt)
+				local Distance = Position and RootPart and (RootPart.Position - Position).Magnitude
+				if Distance and Distance < BestDistance then
+					Best, BestDistance = Prompt, Distance
+				end
+			end
+		end
+		return Best
+	end
+
+	local function NearestCloset()
+		local Best, Distance = nil, math.huge
+		for _, Closet in Objects.HidingSpots do
+			local Prompt = Closet:FindFirstChild("HidePrompt", true)
+			local Position = Prompt and PromptPosition(Prompt)
+			if Position and RootPart and (RootPart.Position - Position).Magnitude < Distance then
+				Best, Distance = Prompt, (RootPart.Position - Position).Magnitude
+			end
+		end
+		return Best
+	end
+
+	-- Roblox' built-in navmesh is inaccurate in a number of Hotel prefabs (most
+	-- visibly the reception desk).  Build a small, room-local 2.5D graph from the
+	-- collision that is actually streamed to this client instead.  A node stores
+	-- whether its clearance requires crouching, so low windows/vents are handled
+	-- as part of the route rather than as a stuck-recovery trick.
+	local function GetFloorPoint(Position, ReferenceY)
+		local Parameters = RaycastParams.new()
+		Parameters.FilterType = Enum.RaycastFilterType.Exclude
+		Parameters.IgnoreWater = true
+		local Reference = ReferenceY or Position.Y
+		local Excluded = {Character}
+		local Best, BestDelta
+		-- Collect several stacked surfaces. A single downward ray often reports a
+		-- table or the top of a low ceiling; the surface closest to the previous
+		-- floor height is the traversable one.
+		for _ = 1, 10 do
+			Parameters.FilterDescendantsInstances = Excluded
+			local Hit = Services.Workspace:Raycast(Vector3.new(Position.X, Reference + 6, Position.Z), Vector3.new(0, -13, 0), Parameters)
+			if not Hit then break end
+			local Delta = math.abs(Hit.Position.Y - Reference)
+			if Hit.Normal.Y > 0.45 and Hit.Instance.CanCollide and Hit.Position.Y >= Reference - 4
+				and Hit.Position.Y <= Reference + 3.6 and (not BestDelta or Delta < BestDelta) then
+				Best, BestDelta = Hit, Delta
+			end
+			table.insert(Excluded, Hit.Instance)
+		end
+		if not Best then return nil end
+		return Best.Position + Vector3.new(0, 0.15, 0)
+	end
+
+	local function HasClearance(FloorPoint, Height)
+		local Parameters = OverlapParams.new()
+		Parameters.FilterType = Enum.RaycastFilterType.Exclude
+		Parameters.FilterDescendantsInstances = {Character}
+		Parameters.MaxParts = 30
+		local Centre = FloorPoint + Vector3.new(0, Height * 0.5 + 0.25, 0)
+		for _, Part in Services.Workspace:GetPartBoundsInBox(CFrame.new(Centre), Vector3.new(2.35, Height, 2.35), Parameters) do
+			if Part.CanCollide
+				and Part.Name ~= "CrouchPart" and Part.Name ~= "TriggerEventCollision"
+				and Part.Name ~= "CollisionFloor" then
+				-- The floor can graze the bottom of the query box; everything above it
+				-- is a real wall/furniture obstruction.
+				if Part.Position.Y + Part.Size.Y * 0.5 > FloorPoint.Y + 0.45 then return false end
+			end
+		end
+		return true
+	end
+
+	local function BuildCollisionRoute(Goal)
+		if not RootPart then return nil end
+		local StepSize = 3
+		local StartFloor = GetFloorPoint(RootPart.Position, RootPart.Position.Y - 3)
+		local GoalFloor = GetFloorPoint(Goal, Goal.Y)
+		if not StartFloor or not GoalFloor then return nil end
+		local Origin = Vector3.new(StartFloor.X, 0, StartFloor.Z)
+		local GoalX = math.floor((GoalFloor.X - Origin.X) / StepSize + 0.5)
+		local GoalZ = math.floor((GoalFloor.Z - Origin.Z) / StepSize + 0.5)
+		local Limit = math.max(18, math.ceil((Vector3.new(GoalFloor.X, 0, GoalFloor.Z) - Origin).Magnitude / StepSize) + 12)
+		local Nodes = {}
+		local Open = {}
+		local function Key(X, Z, Y) return X .. ":" .. Z .. ":" .. math.floor(Y / 2 + 0.5) end
+		local function Heuristic(X, Z, Y)
+			return math.sqrt((X - GoalX)^2 + (Z - GoalZ)^2) + math.abs(Y - GoalFloor.Y) * 0.35
+		end
+		local StartKey = Key(0, 0, StartFloor.Y)
+		Nodes[StartKey] = {X=0, Z=0, Point=StartFloor, G=0, F=Heuristic(0, 0, StartFloor.Y), Crouch=false}
+		table.insert(Open, StartKey)
+		local Found
+		local Directions = {{1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}}
+		for _ = 1, 2600 do
+			if #Open == 0 then break end
+			local BestIndex = 1
+			for Index = 2, #Open do
+				if Nodes[Open[Index]].F < Nodes[Open[BestIndex]].F then BestIndex = Index end
+			end
+			local CurrentKey = table.remove(Open, BestIndex)
+			local Current = Nodes[CurrentKey]
+			if not Current.Closed then
+				Current.Closed = true
+				if math.abs(Current.X - GoalX) <= 1 and math.abs(Current.Z - GoalZ) <= 1
+					and math.abs(Current.Point.Y - GoalFloor.Y) < 5 then Found = CurrentKey break end
+				for _, Direction in Directions do
+					local NX, NZ = Current.X + Direction[1], Current.Z + Direction[2]
+					if math.abs(NX) <= Limit and math.abs(NZ) <= Limit then
+						local Probe = Origin + Vector3.new(NX * StepSize, Current.Point.Y, NZ * StepSize)
+						local FloorPoint = GetFloorPoint(Probe, Current.Point.Y)
+						if FloorPoint and math.abs(FloorPoint.Y - Current.Point.Y) <= 3.6 then
+							local Crouch = false
+							local Clear = HasClearance(FloorPoint, 4.2)
+							if not Clear then Crouch, Clear = true, HasClearance(FloorPoint, 2.45) end
+							if Clear then
+								local NewKey = Key(NX, NZ, FloorPoint.Y)
+								local Cost = Current.G + ((Direction[1] ~= 0 and Direction[2] ~= 0) and 1.414 or 1)
+									+ math.abs(FloorPoint.Y - Current.Point.Y) * 0.35 + (Crouch and 0.18 or 0)
+								local Old = Nodes[NewKey]
+								if not Old or Cost < Old.G then
+									Nodes[NewKey] = {X=NX, Z=NZ, Point=FloorPoint, G=Cost,
+										F=Cost + Heuristic(NX, NZ, FloorPoint.Y), Parent=CurrentKey, Crouch=Crouch}
+									table.insert(Open, NewKey)
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+		if not Found then return nil end
+		local Route = {}
+		while Found and Found ~= StartKey do
+			local Node = Nodes[Found]
+			table.insert(Route, 1, {Position=Node.Point, Crouch=Node.Crouch})
+			Found = Node.Parent
+		end
+		-- Replace the last cell centre with the exact interaction point.
+		if #Route > 0 then Route[#Route].Position = Goal end
+		return Route
+	end
+
+	local function HasDirectLine(From, To, Crouching)
+		local Parameters = RaycastParams.new()
+		Parameters.FilterType = Enum.RaycastFilterType.Exclude
+		Parameters.FilterDescendantsInstances = {Character}
+		Parameters.IgnoreWater = true
+		local Height = Crouching and 1.8 or 2.8
+		local Delta = Vector3.new(To.X - From.X, 0, To.Z - From.Z)
+		if Delta.Magnitude < 1 then return true end
+		for _, Side in {-0.85, 0, 0.85} do
+			local Right = Vector3.new(-Delta.Z, 0, Delta.X).Unit
+			local Hit = Services.Workspace:Raycast(From + Vector3.new(0, Height, 0) + Right * Side, Delta, Parameters)
+			if Hit and Hit.Instance and Hit.Instance.CanCollide
+				and Hit.Instance.Name ~= "CrouchPart" and Hit.Instance.Name ~= "TriggerEventCollision" then return false end
+		end
+		return true
+	end
+
+	local function MoveToward(Position, HidingGoal)
+		if not Position or not RootPart or not Humanoid or not Humanoid.Parent then return false end
+		if Humanoid.Sit then
+			Humanoid.Sit = false
+			Humanoid.Jump = true
+			task.wait(0.15)
+		end
+		local StartedRoom = LatestRoom.Value
+		-- The game's control module overrides MoveTo every frame. Drive Humanoid:Move
+		-- just after input instead, and always remove the binding on exit.
+		local MoveBinding = "AbysallHotelMove"
+		local Target
+		local function Finish(Result)
+			Services.RunService:UnbindFromRenderStep(MoveBinding)
+			if Humanoid and Humanoid.Parent then Humanoid:Move(Vector3.zero, false) end
+			return Result
+		end
+		Services.RunService:BindToRenderStep(MoveBinding, Enum.RenderPriority.Input.Value + 1, function()
+			if not Target or not RootPart or not RootPart.Parent or not Humanoid or not Humanoid.Parent then return end
+			-- Humanoid movement is planar. Feeding the waypoint's vertical delta into
+			-- Move slows/stalls on staircases and split-level rooms.
+			local Delta = Target - RootPart.Position
+			local Direction = Vector3.new(Delta.X, 0, Delta.Z)
+			Humanoid:Move(Direction.Magnitude > 1 and Direction.Unit or Vector3.zero, false)
+		end)
+
+		-- Prefer the collision-derived route. It understands low-clearance cells and
+		-- is independent of Roblox' incorrect Hotel navmesh. The old navmesh path
+		-- below remains only as a last-resort fallback for geometry that has not
+		-- streamed yet.
+		local CollisionRoute = BuildCollisionRoute(Position)
+		if CollisionRoute and #CollisionRoute > 0 then
+			local Index = 1
+			while Index <= #CollisionRoute do
+				if not Toggles.HotelAutoRun.Value or Globals.HotelAutoUnloaded then return Finish(false) end
+				if not RootPart or not RootPart.Parent or not Humanoid or Humanoid.Health <= 0 then return Finish(false) end
+				if Character:GetAttribute("Hiding") or (not HidingGoal and ActiveThreat()) then return Finish(false) end
+				if not HidingGoal and LatestRoom.Value ~= StartedRoom then return Finish(true) end
+
+				-- Smooth the grid route only where three shoulder-height rays confirm
+				-- that skipping intermediate cells cannot cut a furniture corner.
+				local Furthest = Index
+				for Candidate = math.min(#CollisionRoute, Index + 5), Index + 1, -1 do
+					local CandidateNode = CollisionRoute[Candidate]
+					local RequiresCrouch = false
+					for Scan = Index, Candidate do
+						if CollisionRoute[Scan].Crouch then RequiresCrouch = true break end
+					end
+					if HasDirectLine(RootPart.Position, CandidateNode.Position, RequiresCrouch) then
+						Furthest = Candidate
+						break
+					end
+				end
+				Index = Furthest
+				local Node = CollisionRoute[Index]
+				SetCrouching(Node.Crouch)
+				Target = Node.Position
+				local BestDistance = (RootPart.Position - Target).Magnitude
+				local ProgressAt = tick()
+				local Started = tick()
+				while (Vector3.new(RootPart.Position.X, 0, RootPart.Position.Z) - Vector3.new(Target.X, 0, Target.Z)).Magnitude > (Index == #CollisionRoute and 4.5 or 2.2) do
+					if not Toggles.HotelAutoRun.Value or Globals.HotelAutoUnloaded or Humanoid.Health <= 0 then return Finish(false) end
+					if Character:GetAttribute("Hiding") or (not HidingGoal and ActiveThreat()) then return Finish(false) end
+					if not HidingGoal and LatestRoom.Value ~= StartedRoom then return Finish(true) end
+					local Distance = (RootPart.Position - Target).Magnitude
+					if Distance < BestDistance - 0.35 then BestDistance, ProgressAt = Distance, tick() end
+					if Target.Y - RootPart.Position.Y > 1.4 then Humanoid.Jump = true end
+					if tick() - ProgressAt > 1.15 or tick() - Started > 9 then
+						-- Geometry can change after a trigger opens a gate/window. Return to
+						-- Step so the next iteration rebuilds against the new collision.
+						return Finish(false)
+					end
+					task.wait(0.06)
+				end
+				Index += 1
+			end
+			SetCrouching(false)
+			return Finish(true)
+		end
+
+		-- DOORS contains invisible collision volumes that the Roblox navmesh marks
+		-- as walkable. Re-plan after a local crouch/side-step recovery instead of
+		-- repeatedly following the same blocked waypoint.
+		for Replan = 1, 5 do
+			local Path = Services.PathfindingService:CreatePath({
+				AgentRadius = 1.5, AgentHeight = 4, AgentCanJump = true,
+				AgentCanClimb = false, WaypointSpacing = 3
+			})
+			local Waypoints
+			for _, Offset in {Vector3.new(0, -2, 0), Vector3.zero, Vector3.new(0, -3, 0)} do
+				local Success = pcall(function() Path:ComputeAsync(RootPart.Position, Position + Offset) end)
+				if Success and Path.Status == Enum.PathStatus.Success then
+					Waypoints = Path:GetWaypoints()
+					break
+				end
+			end
+			if not Waypoints or #Waypoints == 0 then
+				if (RootPart.Position - Position).Magnitude > 10 then return Finish(false) end
+				Waypoints = {{Position = Position, Action = Enum.PathWaypointAction.Walk}}
+			end
+
+			local NeedsReplan = false
+			for _, Waypoint in Waypoints do
+				if not Toggles.HotelAutoRun.Value or Globals.HotelAutoUnloaded then return Finish(false) end
+				if not RootPart or not RootPart.Parent or not Humanoid or Humanoid.Health <= 0 then return Finish(false) end
+				if Character:GetAttribute("Hiding") or (not HidingGoal and ActiveThreat()) then return Finish(false) end
+				if not HidingGoal and LatestRoom.Value ~= StartedRoom then return Finish(true) end
+				if Waypoint.Action == Enum.PathWaypointAction.Jump then Humanoid.Jump = true end
+				Target = Waypoint.Position
+				local Started = tick()
+				local BestDistance = (RootPart.Position - Target).Magnitude
+				local LastProgress = tick()
+				local Recoveries = 0
+				local Timeout = math.clamp(BestDistance / math.max(Humanoid.WalkSpeed, 8) + 6, 6, 14)
+				while (RootPart.Position - Waypoint.Position).Magnitude > 4 do
+					if not Toggles.HotelAutoRun.Value or Globals.HotelAutoUnloaded or Humanoid.Health <= 0 then return Finish(false) end
+					if Character:GetAttribute("Hiding") or (not HidingGoal and ActiveThreat()) then return Finish(false) end
+					if not HidingGoal and LatestRoom.Value ~= StartedRoom then return Finish(true) end
+					local Distance = (RootPart.Position - Waypoint.Position).Magnitude
+					if Distance < BestDistance - 0.6 then
+						BestDistance = Distance
+						LastProgress = tick()
+					elseif tick() - LastProgress > 0.75 then
+						Recoveries += 1
+						if MainGame and not MainGame.crouching then
+							SetCrouching(true)
+							LastProgress = tick()
+						else
+							local Forward = Vector3.new(Waypoint.Position.X - RootPart.Position.X, 0, Waypoint.Position.Z - RootPart.Position.Z)
+							if Forward.Magnitude > 0.1 then
+								local ForwardUnit = Forward.Unit
+								local Side = Vector3.new(-Forward.Z, 0, Forward.X).Unit
+								-- First real detour tries the right side. Alternate on later
+								-- attempts and widen it to clear long counters/wardrobes.
+								local Sign = Recoveries % 2 == 0 and 1 or -1
+								Target = RootPart.Position + Side * Sign * (10 + math.min(Recoveries, 3) * 5)
+								local DetourStart = RootPart.Position
+								local DetourTick = tick()
+								while tick() - DetourTick < 1.75 and (RootPart.Position - Target).Magnitude > 3 do
+									task.wait(0.05)
+								end
+								if (RootPart.Position - DetourStart).Magnitude > 2 then
+									-- Do not immediately path back into the obstacle. Move beyond
+									-- its plane first, then calculate a fresh route.
+									Target = RootPart.Position + ForwardUnit * 13
+									local ForwardTick = tick()
+									while tick() - ForwardTick < 1.75 and (RootPart.Position - Target).Magnitude > 3 do
+										task.wait(0.05)
+									end
+									NeedsReplan = true
+									break
+								end
+								Target = Waypoint.Position
+							end
+							LastProgress = tick()
+						end
+					end
+					if Recoveries >= 5 or tick() - Started > Timeout then
+						NeedsReplan = true
+						break
+					end
+					task.wait(0.1)
+				end
+				if NeedsReplan then break end
+			end
+			if not NeedsReplan and (RootPart.Position - Position).Magnitude < 9 then
+				SetCrouching(false)
+				return Finish(true)
+			end
+		end
+		return Finish(false)
+	end
+
+	local function StopWithReason(Message)
+		Notice(Message)
+		Toggles.HotelAutoRun:SetValue(false)
+	end
+
+	local function VisitPrompt(Prompt)
+		if not Prompt or (PromptAttempts[Prompt] or 0) >= 3 then return false end
+		local Position = PromptPosition(Prompt)
+		if not Position then return false end
+		local Reached = MoveToward(Position, false)
+		if Reached then SafePrompt(Prompt) end
+		if Reached or (Toggles.HotelAutoRun.Value and not ActiveThreat()) then
+			PromptAttempts[Prompt] = (PromptAttempts[Prompt] or 0) + 1
+		end
+		return Reached
+	end
+
+	local function NearestRouteGate(Room)
+		local Best, BestDistance
+		for _, Object in Room:GetDescendants() do
+			local IsGate = Object:IsA("BasePart") and (
+				Object.Name == "TriggerEventCollision" or Object.Name == "CrouchPart"
+				or Object.Name == "Collision" and Object.Parent and Object.Parent.Name == "TriggerEventCollision"
+			)
+			if IsGate then
+				local Distance = RootPart and (RootPart.Position - Object.Position).Magnitude
+				if Distance and (not BestDistance or Distance < BestDistance) then Best, BestDistance = Object, Distance end
+			elseif Object:IsA("ProximityPrompt") and Object.Enabled and Object.Parent then
+				local ParentName = Object.Parent.Name
+				if ParentName == "ThingToOpen" or ParentName == "MovingDoor" or ParentName == "Wax_Door"
+					or Object.Name == "ActivateEventPrompt" or Object.Name == "ThingToEnable" then
+					local Position = PromptPosition(Object)
+					local Distance = Position and RootPart and (RootPart.Position - Position).Magnitude
+					if Distance and (not BestDistance or Distance < BestDistance) then Best, BestDistance = Object, Distance end
+				end
+			end
+		end
+		return Best
+	end
+
+	local function RunSeekRoute(Room)
+		local Exit = Room:FindFirstChild("RoomExit")
+		if not Exit then return false end
+		local Best, BestScore
+		for _, Node in Objects.SeekNodes do
+			if Node and Node.Parent then
+				local FromPlayer = (RootPart.Position - Node.Position).Magnitude
+				local ToExit = (Exit.Position - Node.Position).Magnitude
+				-- Only take a nearby guiding-light node that advances toward this
+				-- room's exit. This naturally rejects nodes left behind in prior rooms.
+				if FromPlayer < 38 and ToExit + 2 < (Exit.Position - RootPart.Position).Magnitude then
+					local Score = ToExit + FromPlayer * 0.2
+					if not BestScore or Score < BestScore then Best, BestScore = Node, Score end
+				end
+			end
+		end
+		local Duck = Functions.GetNearestDuckBoard()
+		if Duck and Duck.PrimaryPart and (RootPart.Position - Duck.PrimaryPart.Position).Magnitude < 16 then SetCrouching(true) end
+		local Goal = Best and Best.Position or Exit.Position
+		return MoveToward(Goal, false)
+	end
+
+	local function Step()
+		if Floor ~= "Hotel" then return StopWithReason("This mode only works on The Hotel.") end
+		if LatestRoom.Value >= 100 and Toggles.HotelAutoLoop.Value
+			and LocalPlayer:GetAttribute("Alive") ~= true then
+			local Replay = RemotesFolder:FindFirstChild("PlayAgain")
+			if Replay then pcall(function() Replay:FireServer() end) end
+			task.wait(3)
+			return
+		end
+		if not Character or not RootPart or not Humanoid or Humanoid.Health <= 0 then return end
+		if Character:GetAttribute("Hiding") or Globals.AutoClosetActive then return end
+		if Humanoid.Sit then
+			Humanoid.Sit = false
+			Humanoid.Jump = true
+			task.wait(0.15)
+		end
+		Humanoid.WalkSpeed = Functions.GetCurrentSpeed() + Options.HotelAutoSpeed.Value
+
+		if MainGame and MainGame.chase then
+			local ChaseRoom = CurrentRooms:FindFirstChild(tostring(LatestRoom.Value))
+			if ChaseRoom then RunSeekRoute(ChaseRoom) end
+			return
+		end
+
+		local Threat = ActiveThreat()
+		if Threat then
+			local HidePrompt = NearestCloset()
+			if not HidePrompt then return Notice("Threat nearby; no reachable hiding spot yet.") end
+			local HidePosition = PromptPosition(HidePrompt)
+			if HidePosition and MoveToward(HidePosition, true) then SafePrompt(HidePrompt) end
+			return
+		end
+
+		local Number = LatestRoom.Value
+		local Room = CurrentRooms:FindFirstChild(tostring(Number))
+		if not Room or not Room:FindFirstChild("RoomExit") then return end
+		if Number >= 100 then
+			-- Fuses and the electrical key are ordinary objective prompts scattered
+			-- across both levels of room 100. Collect every still-enabled one before
+			-- starting the breaker minigame.
+			local Objective = NearestObjective(Room, {Objectives = true, Keys = true})
+			if Objective then
+				VisitPrompt(Objective)
+				return
+			end
+			local Gate = NearestRouteGate(Room)
+			if Gate and Gate:IsA("ProximityPrompt") then
+				local GatePosition = PromptPosition(Gate)
+				if GatePosition and MoveToward(GatePosition, false) then SafePrompt(Gate) end
+				return
+			end
+			local Breaker = Room:FindFirstChild("ElevatorBreaker", true)
+			if Breaker and Breaker:IsA("Model") then
+				MoveToward(Breaker:GetPivot().Position, false)
+				local Prompt = Breaker:FindFirstChildWhichIsA("ProximityPrompt", true)
+				if Prompt then SafePrompt(Prompt) end
+			end
+			local Elevator = Room:FindFirstChild("ElevatorCar", true)
+			if Globals.BreakerBoxFinishedNotified and Elevator and Elevator:IsA("Model") then
+				MoveToward(Elevator:GetPivot().Position, false)
+			end
+			return
+		end
+
+		local Door = Room:FindFirstChild("Door")
+		local LockPrompt = Door and Door:FindFirstChild("UnlockPrompt", true)
+		local HasUnlockItem = Functions.HasItem("Key") or Functions.HasItem("Lockpick")
+			or Functions.HasItem("SkeletonKey") or Functions.HasItem("Multitool")
+		if LockPrompt and LockPrompt.Enabled and not HasUnlockItem then
+			local KeyPrompt = NearestObjective(Room, {Keys = true})
+			if not KeyPrompt then
+				for _, Prompt in Room:GetDescendants() do
+					if Prompt:IsA("ProximityPrompt") and Prompt.Enabled and Prompt.Parent
+						and (PromptAttempts[Prompt] or 0) < 3
+						and (Prompt.Parent.Name == "Lockpick" or Prompt.Parent.Name == "Multitool") then
+						KeyPrompt = Prompt
+						break
+					end
+				end
+			end
+			if not KeyPrompt then
+				-- Some locked rooms spawn their key only after a drawer is opened.
+				-- Search each drawer once, then look for the newly spawned key again.
+				local SearchPrompt = NearestObjective(Room, { Drawers = true })
+				if SearchPrompt then
+					local Reached = VisitPrompt(SearchPrompt)
+					if Reached then PromptAttempts[SearchPrompt] = 3 end
+					return
+				end
+				return StopWithReason("Door " .. Number .. " is locked; every reachable drawer was searched and no key or lockpick was found.")
+			end
+			-- The Hotel lobby's navmesh incorrectly routes through the front desk.
+			-- Walk around its right edge using room-relative coordinates, so this
+			-- also works when the generated room is rotated in world space.
+			if Number == 0 then
+				local Entrance = Room:FindFirstChild("RoomEntrance")
+				local ExitPart = Room:FindFirstChild("RoomExit")
+				if Entrance and ExitPart then
+					local Look = Entrance.CFrame.LookVector
+					local Forward = Vector3.new(Look.X, 0, Look.Z)
+					if Forward.Magnitude > 1 then
+						Forward = Forward.Unit
+						local Right = Vector3.new(-Forward.Z, 0, Forward.X)
+						if not MoveToward(Entrance.Position + Forward * 27 + Right * 16, false) then return end
+						if not MoveToward(Entrance.Position + Forward * 42 + Right * 16, false) then return end
+					end
+				end
+			end
+			VisitPrompt(KeyPrompt)
+			return
+		end
+
+		if Number == 50 then
+			local Code = Functions.GetLibraryCode()
+			if not Code or not tonumber(Code) then
+				local Hint = NearestObjective(Room, {["Library Hints"] = true})
+				if Hint then
+					VisitPrompt(Hint)
+					return
+				end
+				return StopWithReason("Library code is incomplete; no reachable hint remains.")
+			end
+		end
+
+		local Exit = Room.RoomExit.Position
+		local Entrance = Room:FindFirstChild("RoomEntrance")
+		if Entrance and (Exit - Entrance.Position).Magnitude > 5 then
+			Exit -= (Exit - Entrance.Position).Unit * 4
+		end
+		if not MoveToward(Exit, false) then
+			DoorAttempts[Number] = (DoorAttempts[Number] or 0) + 1
+			local Gate = NearestRouteGate(Room)
+			if Gate then
+				local GatePosition = Gate:IsA("ProximityPrompt") and PromptPosition(Gate) or Gate.Position
+				if Gate.Name == "CrouchPart" then SetCrouching(true) end
+				if GatePosition and MoveToward(GatePosition, false) and Gate:IsA("ProximityPrompt") then SafePrompt(Gate) end
+				task.wait(0.45)
+				return
+			end
+			if DoorAttempts[Number] >= 3 then
+				local Objective = NearestObjective(Room, {Objectives = true})
+				if Objective then
+					VisitPrompt(Objective)
+					DoorAttempts[Number] = 0
+				else
+					StopWithReason("No safe path to door " .. Number .. ". Auto Hotel stopped.")
+				end
+			end
+			return
+		end
+		if LockPrompt and LockPrompt.Enabled then SafePrompt(LockPrompt) end
+		if Door then
+			local Manual = Door:FindFirstChild("ManualOpenPrompt", true)
+			if Manual and Manual.Enabled then SafePrompt(Manual) end
+			local ClientOpen = Door:FindFirstChild("ClientOpen")
+			if ClientOpen and ClientOpen:IsA("RemoteEvent") then pcall(function() ClientOpen:FireServer() end) end
+		end
+		task.wait(0.65)
+		if LatestRoom.Value == Number then
+			DoorAttempts[Number] = (DoorAttempts[Number] or 0) + 1
+			if DoorAttempts[Number] >= 4 then
+				StopWithReason("Door " .. Number .. " did not open. Auto Hotel stopped for safety.")
+			end
+		else
+			DoorAttempts[Number] = nil
+			LastNotice = nil
+		end
+	end
+
+	Toggles.HotelAutoRun:OnChanged(function(Enabled)
+		if not Enabled then
+			RestoreSettings()
+			return
+		end
+		if Floor ~= "Hotel" then return StopWithReason("Switch to The Hotel first.") end
+		Globals.HotelOldSpeed = Options.SpeedBoostSlider.Value
+		Options.SpeedBoostSlider:SetValue(Options.HotelAutoSpeed.Value)
+		for _, Name in {
+			"SpeedBoostToggle", "AutoInteractToggle", "AutoClosetToggle",
+			"AutoUnlockPadlockToggle", "AutoHeartbeatMinigame", "AutoBreakerBox",
+			"BypassEyes", "BypassDupe", "BypassGiggle", "BypassSnare",
+			"BypassSeekObstructions", "BypassSeekingWall", "FigureGodmode",
+			"NoScreechDamage", "NoHaltDamage"
+		} do SetManaged(Name, true) end
+		Notice("Started. Navigation pauses for threats and stops on unsolved rooms.")
+	end)
+	Options.HotelAutoSpeed:OnChanged(function(Value)
+		if Toggles.HotelAutoRun.Value then Options.SpeedBoostSlider:SetValue(Value) end
+	end)
+
+	task.spawn(function()
+		while not Globals.HotelAutoUnloaded do
+			task.wait(0.2)
+			if Toggles.HotelAutoRun.Value then
+				local Ok, Error = pcall(Step)
+				if not Ok then StopWithReason("Navigation error: " .. tostring(Error)) end
+			end
+		end
+	end)
+
+	Globals.StopHotelAutoRun = function()
+		Globals.HotelAutoUnloaded = true
+		if Toggles.HotelAutoRun.Value then Toggles.HotelAutoRun:SetValue(false) end
+		RestoreSettings()
+	end
+end)()
+
 Library:OnUnload(function()
+	if Globals.StopHotelAutoRun then Globals.StopHotelAutoRun() end
 	for Key, Connection in Connections do
 		if type(Key) == "string" then
 			pcall(function() Connection:Disconnect() end)

@@ -16,8 +16,8 @@ local GameList = {
   [2440500124] = "Doors"
 }
 
-local BaseUrl = "https://raw.githubusercontent.com/drawback/Doors/refs/heads/main/"
-local CacheVersion = "56dabc890ece42313aff64ea993855bea8ef0551"
+local BaseUrl = "https://raw.githubusercontent.com/Financially/Doors/refs/heads/main/"
+local CacheVersion = "financially-auto-hotel-v1"
 local function SourceUrl(Path)
     return BaseUrl .. Path .. "?v=" .. CacheVersion
 end

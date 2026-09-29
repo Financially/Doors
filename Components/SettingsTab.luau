@@ -88,7 +88,7 @@ return function(Window)
 	MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "RightShift", NoUI = true, Text = "Menu keybind" })
 	
 	MenuGroup:AddButton("Copy Project Link", function()
-		toclipboard("https://github.com/drawback/Doors")
+		toclipboard("https://github.com/Financially/Doors")
 		Library:Notify("Project link copied.")
 	end)
 	
