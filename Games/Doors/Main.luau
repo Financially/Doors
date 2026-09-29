@@ -2120,8 +2120,8 @@ Groupboxes.Floors_Automation:AddToggle("HotelAutoRun", {
 	Tooltip = "Walks toward the next door, collects required keys/objectives and pauses for threats. Stops safely when a room cannot be solved."
 })
 Groupboxes.Floors_Automation:AddSlider("HotelAutoSpeed", {
-	Text = "Auto Hotel Speed Bonus", Min = 0, Max = 35, Default = 10, Rounding = 0,
-	Tooltip = "Uses the existing Speed Boost while Auto Hotel is running."
+	Text = "Auto Hotel Speed Bonus", Min = 0, Max = 12, Default = 3, Rounding = 0,
+	Tooltip = "Small server-safe speed bonus. High values can cause server rubber-banding."
 })
 Groupboxes.Floors_Automation:AddToggle("HotelAutoLoop", {
 	Text = "Replay Hotel after win", Default = false,
@@ -3340,7 +3340,8 @@ Functions.HandleCharacter = function(NewCharacter)
 
 		if RemotesFolder:FindFirstChild("Crouch") and tick() - Globals.LastCrouchFire > 0.1 then
 			local IsCrouch = Functions.IsCrouching()
-			if Toggles.CrouchSpoof.Value or Toggles.PositionSpoof.Value then IsCrouch = true end
+			if (Toggles.CrouchSpoof and Toggles.CrouchSpoof.Value)
+				or (Toggles.PositionSpoof and Toggles.PositionSpoof.Value) then IsCrouch = true end
 			RemotesFolder.Crouch:FireServer(IsCrouch, true)
 			Globals.LastCrouchFire = tick()
 		end
@@ -4989,6 +4990,56 @@ end)
 		return true
 	end
 
+	-- Deterministic movement for the fixed reception layout. Unlike MoveToward,
+	-- this deliberately does not invoke either navmesh: room 0 always has the
+	-- same clear run to the luggage-cart opening shown by the user.
+	local function DirectWalk(Position, Crouching, Timeout)
+		if not Position or not RootPart or not Humanoid then return false end
+		SetCrouching(Crouching == true)
+		local Binding = "AbysallHotelDirect"
+		Services.RunService:BindToRenderStep(Binding, Enum.RenderPriority.Input.Value + 1, function()
+			if not RootPart or not RootPart.Parent or not Humanoid or not Humanoid.Parent then return end
+			local Delta = Position - RootPart.Position
+			local Flat = Vector3.new(Delta.X, 0, Delta.Z)
+			Humanoid:Move(Flat.Magnitude > 1 and Flat.Unit or Vector3.zero, false)
+		end)
+		local Started, LastPosition, ProgressAt = tick(), RootPart.Position, tick()
+		while (Vector3.new(RootPart.Position.X, 0, RootPart.Position.Z) - Vector3.new(Position.X, 0, Position.Z)).Magnitude > 2.4 do
+			if not Toggles.HotelAutoRun.Value or Globals.HotelAutoUnloaded or Humanoid.Health <= 0 then break end
+			if ActiveThreat() or Character:GetAttribute("Hiding") then break end
+			if (RootPart.Position - LastPosition).Magnitude > 0.35 then LastPosition, ProgressAt = RootPart.Position, tick() end
+			if tick() - ProgressAt > 1.2 or tick() - Started > (Timeout or 8) then break end
+			task.wait(0.05)
+		end
+		Services.RunService:UnbindFromRenderStep(Binding)
+		Humanoid:Move(Vector3.zero, false)
+		return (Vector3.new(RootPart.Position.X, 0, RootPart.Position.Z) - Vector3.new(Position.X, 0, Position.Z)).Magnitude <= 3.2
+	end
+
+	local function TraverseReception(Room, KeyPrompt)
+		local Entrance = Room:FindFirstChild("RoomEntrance")
+		local CrouchPart = Room:FindFirstChild("CrouchPart", true)
+		if not Entrance or not CrouchPart or not CrouchPart:IsA("BasePart") then return false end
+		local Forward = Vector3.new(Entrance.CFrame.LookVector.X, 0, Entrance.CFrame.LookVector.Z).Unit
+		local Right = Vector3.new(-Forward.Z, 0, Forward.X)
+		local BeforeCart = CrouchPart.Position + Right * 7
+		local BehindCart = CrouchPart.Position - Right * 5
+		-- Straight ahead, crouch through the luggage cart, take the key, then use
+		-- the same opening to return to the lobby side.
+		if not DirectWalk(BeforeCart, false, 10) then return false end
+		if not DirectWalk(BehindCart, true, 6) then return false end
+		if KeyPrompt and KeyPrompt.Parent then
+			local KeyPosition = PromptPosition(KeyPrompt)
+			if not KeyPosition or not DirectWalk(KeyPosition, true, 6) then return false end
+			SafePrompt(KeyPrompt)
+			task.wait(0.35)
+		end
+		if not DirectWalk(BehindCart, true, 6) then return false end
+		if not DirectWalk(BeforeCart, true, 6) then return false end
+		SetCrouching(false)
+		return true
+	end
+
 	local function MoveToward(Position, HidingGoal)
 		if not Position or not RootPart or not Humanoid or not Humanoid.Parent then return false end
 		if Humanoid.Sit then
@@ -5240,7 +5291,7 @@ end)
 			Humanoid.Jump = true
 			task.wait(0.15)
 		end
-		Humanoid.WalkSpeed = Functions.GetCurrentSpeed() + Options.HotelAutoSpeed.Value
+		Humanoid.WalkSpeed = math.min(Functions.GetCurrentSpeed() + Options.HotelAutoSpeed.Value, 20)
 
 		if MainGame and MainGame.chase then
 			local ChaseRoom = CurrentRooms:FindFirstChild(tostring(LatestRoom.Value))
@@ -5315,22 +5366,9 @@ end)
 				end
 				return StopWithReason("Door " .. Number .. " is locked; every reachable drawer was searched and no key or lockpick was found.")
 			end
-			-- The Hotel lobby's navmesh incorrectly routes through the front desk.
-			-- Walk around its right edge using room-relative coordinates, so this
-			-- also works when the generated room is rotated in world space.
 			if Number == 0 then
-				local Entrance = Room:FindFirstChild("RoomEntrance")
-				local ExitPart = Room:FindFirstChild("RoomExit")
-				if Entrance and ExitPart then
-					local Look = Entrance.CFrame.LookVector
-					local Forward = Vector3.new(Look.X, 0, Look.Z)
-					if Forward.Magnitude > 1 then
-						Forward = Forward.Unit
-						local Right = Vector3.new(-Forward.Z, 0, Forward.X)
-						if not MoveToward(Entrance.Position + Forward * 27 + Right * 16, false) then return end
-						if not MoveToward(Entrance.Position + Forward * 42 + Right * 16, false) then return end
-					end
-				end
+				if TraverseReception(Room, KeyPrompt) then PromptAttempts[KeyPrompt] = 3 end
+				return
 			end
 			VisitPrompt(KeyPrompt)
 			return
