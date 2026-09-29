@@ -17,7 +17,7 @@ local GameList = {
 }
 
 local BaseUrl = "https://raw.githubusercontent.com/Financially/Doors/refs/heads/main/"
-local CacheVersion = "financially-auto-hotel-v5"
+local CacheVersion = "financially-auto-hotel-v6"
 local function SourceUrl(Path)
     return BaseUrl .. Path .. "?v=" .. CacheVersion
 end

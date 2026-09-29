@@ -4837,8 +4837,8 @@ end)
 			local Limit = EntityDistances[Entity.Name]
 			local Part = Limit and Entity:IsA("Model") and Entity.PrimaryPart
 			if Limit and Part and Entity:GetAttribute("Inactive") ~= true
-				and LocalPlayer:DistanceFromCharacter(Part.Position) < (EarlyRusher[Entity.Name]
-					and (Character:GetAttribute("Hiding") and math.huge or 200) or Limit * 1.5) then
+				and (EarlyRusher[Entity.Name]
+					or LocalPlayer:DistanceFromCharacter(Part.Position) < Limit * 1.5) then
 				return Entity
 			end
 		end
@@ -5108,7 +5108,7 @@ end)
 		end
 		local StartedRoom = LatestRoom.Value
 		local FlatDistance = (Vector3.new(Position.X, 0, Position.Z) - Vector3.new(RootPart.Position.X, 0, RootPart.Position.Z)).Magnitude
-		if not HidingGoal and Position.Y - RootPart.Position.Y > 2 and FlatDistance < 55 then
+		if not HidingGoal and math.abs(Position.Y - RootPart.Position.Y) > 2 and FlatDistance < 55 then
 			-- Stair landings are frequently missing from the Hotel navmesh. Walking the
 			-- visible corridor directly avoids alternating between both stair rails.
 			return DirectWalk(Position, false, 10)
@@ -5296,6 +5296,21 @@ end)
 		return Reached
 	end
 
+	local function VisitKeyPrompt(Prompt)
+		if VisitPrompt(Prompt) then return true end
+		local Position = PromptPosition(Prompt)
+		if not Position then return false end
+		-- A key can spawn behind/on a bed. Approach its activation radius from four
+		-- sides instead of repeatedly targeting the occupied centre of the furniture.
+		for _, Offset in {
+			Vector3.new(7, 0, 0), Vector3.new(-7, 0, 0),
+			Vector3.new(0, 0, 7), Vector3.new(0, 0, -7)
+		} do
+			if MoveToward(Position + Offset, false) and SafePrompt(Prompt) then return true end
+		end
+		return false
+	end
+
 	local function NearestRouteGate(Room)
 		local Best, BestDistance
 		for _, Object in Room:GetDescendants() do
@@ -5333,6 +5348,24 @@ end)
 			end
 		end
 		return nil
+	end
+
+	local function DoorKeyPrompt(Room)
+		local Best, BestDistance
+		for _, Object in Room:GetDescendants() do
+			if Object:IsA("ProximityPrompt") and Object.Enabled and Object.Parent then
+				local ParentName = Object.Parent.Name
+				if ParentName == "KeyObtain" or ParentName == "ElectricalKeyObtain"
+					or ParentName == "KeyBackdoor" or ParentName == "KeyIron" then
+					local Position = PromptPosition(Object)
+					local Distance = Position and (RootPart.Position - Position).Magnitude
+					if Distance and (not BestDistance or Distance < BestDistance) then
+						Best, BestDistance = Object, Distance
+					end
+				end
+			end
+		end
+		return Best
 	end
 
 	local function SallyToyPrompt(Room)
@@ -5580,7 +5613,7 @@ end)
 		local HasUnlockItem = Functions.HasItem("Key") or Functions.HasItem("Lockpick")
 			or Functions.HasItem("SkeletonKey") or Functions.HasItem("Multitool")
 		if LockPrompt and LockPrompt.Enabled and not HasUnlockItem then
-			local KeyPrompt = NearestObjective(Room, {Keys = true})
+			local KeyPrompt = DoorKeyPrompt(Room) or NearestObjective(Room, {Keys = true})
 			if not KeyPrompt then
 				for _, Prompt in Room:GetDescendants() do
 					if Prompt:IsA("ProximityPrompt") and Prompt.Enabled and Prompt.Parent
@@ -5606,7 +5639,7 @@ end)
 				if TraverseReception(Room, KeyPrompt) then PromptAttempts[KeyPrompt] = 3 end
 				return
 			end
-			if not VisitPrompt(KeyPrompt) then
+			if not VisitKeyPrompt(KeyPrompt) then
 				local Gate = NearestRouteGate(Room)
 				if Gate and Gate:IsA("BasePart") then
 					DirectWalk(Gate.Position, false, 4)
