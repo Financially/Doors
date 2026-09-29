@@ -4828,12 +4828,17 @@ end)
 	end
 
 	local function ActiveThreat()
+		local EarlyRusher = {
+			RushMoving = true, AmbushMoving = true, BackdoorRush = true,
+			A60 = true, A120 = true, GlitchRush = true, GlitchAmbush = true,
+			CustomEntity = true, FrozenAmbush = true
+		}
 		for _, Entity in Services.Workspace:GetChildren() do
 			local Limit = EntityDistances[Entity.Name]
 			local Part = Limit and Entity:IsA("Model") and Entity.PrimaryPart
 			if Limit and Part and Entity:GetAttribute("Inactive") ~= true
-				and not (Options.AutoClosetEntityList.Value or {})[(Entities[Entity.Name] or {}).Alias]
-				and LocalPlayer:DistanceFromCharacter(Part.Position) < Limit * 1.5 then
+				and (EarlyRusher[Entity.Name]
+					or LocalPlayer:DistanceFromCharacter(Part.Position) < Limit * 1.5) then
 				return Entity
 			end
 		end
@@ -4854,6 +4859,18 @@ end)
 		local Position = PromptPosition(Prompt)
 		if not Position or not RootPart or (RootPart.Position - Position).Magnitude > math.max(12, Prompt.MaxActivationDistance + 3) then return false end
 		return pcall(Functions.ForceFirePrompt, Prompt)
+	end
+
+	local function FaceCamera(Direction)
+		local Camera = Services.Workspace.CurrentCamera
+		if not Camera or Direction.Magnitude < 0.05 then return end
+		local Flat = Vector3.new(Direction.X, 0, Direction.Z)
+		if Flat.Magnitude < 0.05 then return end
+		local Current = Camera.CFrame
+		local Vertical = math.clamp(Current.LookVector.Y, -0.82, 0.82)
+		local Look = Vector3.new(Flat.Unit.X, Vertical, Flat.Unit.Z).Unit
+		local Goal = CFrame.lookAt(Current.Position, Current.Position + Look, Vector3.yAxis)
+		Camera.CFrame = Current:Lerp(Goal, 0.16)
 	end
 
 	local function NearestObjective(Room, Categories)
@@ -5030,6 +5047,7 @@ end)
 			if not RootPart or not RootPart.Parent or not Humanoid or not Humanoid.Parent then return end
 			local Delta = Position - RootPart.Position
 			local Flat = Vector3.new(Delta.X, 0, Delta.Z)
+			FaceCamera(Flat)
 			Humanoid:Move(Flat.Magnitude > 1 and Flat.Unit or Vector3.zero, false)
 		end)
 		local Started, LastPosition, ProgressAt = tick(), RootPart.Position, tick()
@@ -5092,6 +5110,7 @@ end)
 			-- Move slows/stalls on staircases and split-level rooms.
 			local Delta = Target - RootPart.Position
 			local Direction = Vector3.new(Delta.X, 0, Delta.Z)
+			FaceCamera(Direction)
 			Humanoid:Move(Direction.Magnitude > 1 and Direction.Unit or Vector3.zero, false)
 		end)
 
@@ -5282,6 +5301,73 @@ end)
 		return Best
 	end
 
+	local function PendingBasementLever(Room)
+		local HasGate = Room:FindFirstChild("ThingToOpen", true)
+			or Room:FindFirstChild("IndustrialGate", true)
+			or Room:FindFirstChild("Gate", true)
+		if not HasGate then return nil end
+		for _, Prompt in Room:GetDescendants() do
+			if Prompt:IsA("ProximityPrompt") and Prompt.Enabled and Prompt.Parent
+				and (Prompt.Parent.Name == "LeverForGate"
+					or Prompt:FindFirstAncestor("LeverForGate"))
+				and not Prompt:GetAttribute("Interactions") then
+				return Prompt
+			end
+		end
+		return nil
+	end
+
+	local function SallyToyPrompt(Room)
+		for _, Prompt in Room:GetDescendants() do
+			if Prompt:IsA("ProximityPrompt") and Prompt.Enabled and Prompt.Parent then
+				local Parent = Prompt.Parent
+				local Name = string.lower(Parent.Name)
+				local IsToy = Prompt:GetAttribute("SallyFlavor") ~= nil
+					or Parent:GetAttribute("SallyFlavor") ~= nil
+					or Parent:GetAttribute("SallyToy") == true
+					or string.find(Name, "sally", 1, true) ~= nil
+					or string.find(Name, "toy", 1, true) ~= nil
+				if IsToy and not Prompt:GetAttribute("SallyHolding")
+					and not Prompt:FindFirstAncestor("SallyMoving") then return Prompt end
+			end
+		end
+		return nil
+	end
+
+	local function HandleSally()
+		local Sally = Services.Workspace:FindFirstChild("SallyMoving")
+		if not Sally then return false end
+		local Prompt
+		for _, Object in Sally:GetDescendants() do
+			if Object:IsA("ProximityPrompt") and Object.Enabled
+				and Object:GetAttribute("SallyHolding") then Prompt = Object break end
+		end
+		if not Prompt then return false end
+		local Tool = Character:FindFirstChildOfClass("Tool")
+		if not Tool or Tool.Name == "Crucifix" then
+			local Backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+			local Fallback
+			if Backpack then
+				for _, Candidate in Backpack:GetChildren() do
+					if Candidate:IsA("Tool") and Candidate.Name ~= "Crucifix" then
+						local N = string.lower(Candidate.Name)
+						if Candidate:GetAttribute("SallyFlavor") ~= nil or Candidate:GetAttribute("SallyToy")
+							or string.find(N, "toy", 1, true) or string.find(N, "sally", 1, true) then
+							Tool = Candidate break
+						end
+						Fallback = Fallback or Candidate
+					end
+				end
+			end
+			Tool = Tool or Fallback
+			if Tool then Humanoid:EquipTool(Tool) task.wait(0.1) end
+		end
+		if not Tool then Notice("Sally is here, but there is no item to give her.") return true end
+		local Position = PromptPosition(Prompt)
+		if Position and MoveToward(Position, false) then SafePrompt(Prompt) end
+		return true
+	end
+
 	local function RunSeekRoute(Room)
 		local Exit = Room:FindFirstChild("RoomExit")
 		if not Exit then return false end
@@ -5338,6 +5424,8 @@ end)
 			return
 		end
 
+		if HandleSally() then return end
+
 		local Number = LatestRoom.Value
 		local Room = CurrentRooms:FindFirstChild(tostring(Number))
 		if not Room or not Room:FindFirstChild("RoomExit") then return end
@@ -5370,6 +5458,17 @@ end)
 		end
 
 		local Door = Room:FindFirstChild("Door")
+		local BasementLever = PendingBasementLever(Room)
+		if BasementLever then
+			Notice("Basement gate found; activating its lever.")
+			if VisitPrompt(BasementLever) then task.wait(0.75) end
+			return
+		end
+		local ToyPrompt = SallyToyPrompt(Room)
+		if ToyPrompt then
+			VisitPrompt(ToyPrompt)
+			return
+		end
 		local LockPrompt = Door and Door:FindFirstChild("UnlockPrompt", true)
 		local HasUnlockItem = Functions.HasItem("Key") or Functions.HasItem("Lockpick")
 			or Functions.HasItem("SkeletonKey") or Functions.HasItem("Multitool")
@@ -5496,6 +5595,8 @@ end)
 			["Doors / Locks"] = true, Objectives = true, ["Hiding Places"] = false,
 			Other = true
 		})
+		-- Auto Hotel owns threat handling; never inherit a saved Rush/Ambush ignore list.
+		SetManagedOption("AutoClosetEntityList", {})
 		Notice("Started. Navigation pauses for threats and stops on unsolved rooms.")
 	end)
 	Options.HotelAutoSpeed:OnChanged(function(Value)
