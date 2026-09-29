@@ -2120,8 +2120,8 @@ Groupboxes.Floors_Automation:AddToggle("HotelAutoRun", {
 	Tooltip = "Walks toward the next door, collects required keys/objectives and pauses for threats. Stops safely when a room cannot be solved."
 })
 Groupboxes.Floors_Automation:AddSlider("HotelAutoSpeed", {
-	Text = "Auto Hotel Speed Bonus", Min = 0, Max = 12, Default = 3, Rounding = 0,
-	Tooltip = "Small server-safe speed bonus. High values can cause server rubber-banding."
+	Text = "Auto Hotel Speed Bonus", Min = 0, Max = 8, Default = 0, Rounding = 0,
+	Tooltip = "Temporarily ignored: the Hotel server was correcting movement even with small bonuses."
 })
 Groupboxes.Floors_Automation:AddToggle("HotelAutoLoop", {
 	Text = "Replay Hotel after win", Default = false,
@@ -4749,6 +4749,7 @@ end)
 -- from the game's per-frame character handlers.
 ;(function()
 	local ChangedSettings = {}
+	local ChangedOptions = {}
 	local LastNotice = nil
 	local DoorAttempts = {}
 	local PromptAttempts = setmetatable({}, { __mode = "k" })
@@ -4758,6 +4759,16 @@ end)
 
 	local function SetCrouching(Value)
 		if not MainGame or type(MainGame.crouch) ~= "function" then return false end
+		if not Value and MainGame.crouching and RootPart and Character then
+			local Parameters = OverlapParams.new()
+			Parameters.FilterType = Enum.RaycastFilterType.Exclude
+			Parameters.FilterDescendantsInstances = {Character}
+			Parameters.MaxParts = 12
+			local Centre = RootPart.Position + Vector3.new(0, 1.8, 0)
+			for _, Part in Services.Workspace:GetPartBoundsInBox(CFrame.new(Centre), Vector3.new(2.4, 3.2, 2.4), Parameters) do
+				if Part.CanCollide then return false end
+			end
+		end
 		local Success = pcall(function()
 			if Value and not MainGame.crouching then
 				MainGame.crouch(true)
@@ -4782,12 +4793,30 @@ end)
 		if Toggle.Value ~= Value then Toggle:SetValue(Value) end
 	end
 
+	local function SetManagedOption(Name, Value)
+		local Option = Options[Name]
+		if not Option then return end
+		if ChangedOptions[Name] == nil then
+			if type(Option.Value) == "table" then
+				ChangedOptions[Name] = table.clone(Option.Value)
+			else
+				ChangedOptions[Name] = Option.Value
+			end
+		end
+		Option:SetValue(Value)
+	end
+
 	local function RestoreSettings()
 		for Name, OldValue in ChangedSettings do
 			local Toggle = Toggles[Name]
 			if Toggle and Toggle.Value ~= OldValue then Toggle:SetValue(OldValue) end
 		end
 		table.clear(ChangedSettings)
+		for Name, OldValue in ChangedOptions do
+			local Option = Options[Name]
+			if Option then Option:SetValue(OldValue) end
+		end
+		table.clear(ChangedOptions)
 		if Globals.HotelOldSpeed ~= nil then
 			Options.SpeedBoostSlider:SetValue(Globals.HotelOldSpeed)
 			Globals.HotelOldSpeed = nil
@@ -5224,7 +5253,7 @@ end)
 		if not Position then return false end
 		local Reached = MoveToward(Position, false)
 		if Reached then SafePrompt(Prompt) end
-		if Reached or (Toggles.HotelAutoRun.Value and not ActiveThreat()) then
+		if Reached then
 			PromptAttempts[Prompt] = (PromptAttempts[Prompt] or 0) + 1
 		end
 		return Reached
@@ -5291,7 +5320,8 @@ end)
 			Humanoid.Jump = true
 			task.wait(0.15)
 		end
-		Humanoid.WalkSpeed = math.min(Functions.GetCurrentSpeed() + Options.HotelAutoSpeed.Value, 20)
+		-- Never write WalkSpeed here. Saved slider values from older releases could
+		-- silently re-enable a bonus and make the server rubber-band the character.
 
 		if MainGame and MainGame.chase then
 			local ChaseRoom = CurrentRooms:FindFirstChild(tostring(LatestRoom.Value))
@@ -5370,7 +5400,14 @@ end)
 				if TraverseReception(Room, KeyPrompt) then PromptAttempts[KeyPrompt] = 3 end
 				return
 			end
-			VisitPrompt(KeyPrompt)
+			if not VisitPrompt(KeyPrompt) then
+				local Gate = NearestRouteGate(Room)
+				if Gate and Gate:IsA("BasePart") then
+					DirectWalk(Gate.Position, false, 4)
+					if Gate.Name == "CrouchPart" then SetCrouching(true) end
+					task.wait(1.1)
+				end
+			end
 			return
 		end
 
@@ -5396,9 +5433,18 @@ end)
 			local Gate = NearestRouteGate(Room)
 			if Gate then
 				local GatePosition = Gate:IsA("ProximityPrompt") and PromptPosition(Gate) or Gate.Position
-				if Gate.Name == "CrouchPart" then SetCrouching(true) end
-				if GatePosition and MoveToward(GatePosition, false) and Gate:IsA("ProximityPrompt") then SafePrompt(Gate) end
-				task.wait(0.45)
+				if Gate:IsA("ProximityPrompt") then
+					if GatePosition and MoveToward(GatePosition, false) then SafePrompt(Gate) end
+				else
+					-- Ruined-shop rooms initially have closed automatic double doors.
+					-- Walking directly toward the broken-window CrouchPart gets close
+					-- enough to activate those doors even though no route exists yet.
+					-- Once their collision changes, the next Step rebuilds the route and
+					-- traverses the window while crouched.
+					if GatePosition then DirectWalk(GatePosition, false, 4) end
+					if Gate.Name == "CrouchPart" then SetCrouching(true) end
+				end
+				task.wait(1.1)
 				return
 			end
 			if DoorAttempts[Number] >= 3 then
@@ -5437,19 +5483,23 @@ end)
 			return
 		end
 		if Floor ~= "Hotel" then return StopWithReason("Switch to The Hotel first.") end
-		Globals.HotelOldSpeed = Options.SpeedBoostSlider.Value
-		Options.SpeedBoostSlider:SetValue(Options.HotelAutoSpeed.Value)
 		for _, Name in {
-			"SpeedBoostToggle", "AutoInteractToggle", "AutoClosetToggle",
+			"AutoInteractToggle", "AutoClosetToggle", "ObjectiveESPToggle", "ItemESPToggle",
 			"AutoUnlockPadlockToggle", "AutoHeartbeatMinigame", "AutoBreakerBox",
 			"BypassEyes", "BypassDupe", "BypassGiggle", "BypassSnare",
 			"BypassSeekObstructions", "BypassSeekingWall", "FigureGodmode",
 			"NoScreechDamage", "NoHaltDamage"
 		} do SetManaged(Name, true) end
+		SetManagedOption("AutoInteractCategories", {
+			Drawers = true, Chest = true, ["Locked Chest"] = true, Gold = true,
+			Keys = true, ["Library Hints"] = true, Pickups = true,
+			["Doors / Locks"] = true, Objectives = true, ["Hiding Places"] = false,
+			Other = true
+		})
 		Notice("Started. Navigation pauses for threats and stops on unsolved rooms.")
 	end)
 	Options.HotelAutoSpeed:OnChanged(function(Value)
-		if Toggles.HotelAutoRun.Value then Options.SpeedBoostSlider:SetValue(Value) end
+		-- Kept only for config compatibility; movement stays server-authoritative.
 	end)
 
 	task.spawn(function()
