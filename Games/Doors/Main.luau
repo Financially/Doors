@@ -2327,6 +2327,10 @@ Connections.RoomsHandler = CurrentRooms.ChildAdded:Connect(function(Room)
 			NewNode.Position = WaypointPos
 			NewNode.CanCollide = false
 			NewNode.Name = "SeekLightNode"
+			-- These lights are emitted in the authoritative chase order. Auto Hotel
+			-- consumes this list; previously only the ESP clone was created, leaving
+			-- RunSeekRoute with an empty route and making it run straight into wardrobes.
+			table.insert(Objects.SeekNodes, NewNode)
 
 			local PrevNode = PreviousNode or NewNode
 			PreviousNode = NewNode
@@ -5534,7 +5538,12 @@ end)
 			end
 		end
 		local Duck = Functions.GetNearestDuckBoard()
-		if Duck and Duck.PrimaryPart and (RootPart.Position - Duck.PrimaryPart.Position).Magnitude < 16 then SetCrouching(true) end
+		if Duck and Duck.PrimaryPart then
+			local DuckDistance = (RootPart.Position - Duck.PrimaryPart.Position).Magnitude
+			if DuckDistance < 24 then SetCrouching(true) end
+		elseif MainGame.crouching then
+			SetCrouching(false)
+		end
 		local Goal = Best and Best.Position or Exit.Position
 		return MoveToward(Goal, false)
 	end
