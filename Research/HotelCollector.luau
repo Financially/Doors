@@ -26,6 +26,7 @@ end
 
 local GameData = ReplicatedStorage:WaitForChild("GameData")
 local LatestRoom = GameData:WaitForChild("LatestRoom")
+local FloorValue = GameData:WaitForChild("Floor")
 local CurrentRooms = Workspace:WaitForChild("CurrentRooms")
 local Player = Players.LocalPlayer
 local runId = HttpService:GenerateGUID(false)
@@ -57,6 +58,7 @@ local function roomSignature(Room, Entrance, Exit)
 end
 
 local function snapshot(Room)
+	if FloorValue.Value ~= "Hotel" then return end
 	if not Room or seen[Room] then return end
 	local Entrance = Room:FindFirstChild("RoomEntrance")
 	local Exit = Room:FindFirstChild("RoomExit")
@@ -95,7 +97,7 @@ local function snapshot(Room)
 	append(ROOMS, Data)
 end
 
-append(SESSION, {type="start", run=runId, at=os.time(), job=game.JobId, version=game.PlaceVersion})
+append(SESSION, {type="start", run=runId, at=os.time(), job=game.JobId, version=game.PlaceVersion, floor=FloorValue.Value})
 for _, Room in CurrentRooms:GetChildren() do task.defer(snapshot, Room) end
 local connections = {}
 table.insert(connections, CurrentRooms.ChildAdded:Connect(function(Room) task.wait(0.5) snapshot(Room) end))
@@ -108,6 +110,7 @@ end))
 
 task.spawn(function()
 	while task.wait(0.2) do
+		if FloorValue.Value ~= "Hotel" then continue end
 		local Character = Player.Character
 		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
 		local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
